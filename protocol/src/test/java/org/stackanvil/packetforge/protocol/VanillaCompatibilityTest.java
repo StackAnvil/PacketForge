@@ -83,6 +83,18 @@ class VanillaCompatibilityTest {
             }
             samples.add(new ClientboundPlayerInfoUpdatePacket(actions, List.of(new ActionEntry<>(new UUID(1, 2), values), new ActionEntry<>(new UUID(3, 4), values))));
         }
+        var arguments = models.values().stream().filter(m -> m.has("registry") && m.get("registry").getAsString().equals("COMMAND_ARGUMENT_TYPE")).findFirst().orElseThrow();
+        for (var branchValue : arguments.getAsJsonArray("cases")) for (int variant = 0; variant < 3; variant++) for (boolean suggestions : new boolean[]{false, true}) {
+            var branch = branchValue.getAsJsonObject(); var schema = branch.getAsJsonObject("value");
+            Object value = GeneratedRoundTripTest.sample(GeneratedRoundTripTest.type(schema.get("type").getAsString()), schema.get("shape").getAsString(), variant, models);
+            var argument = new CommandNode.Argument("argument café", new Variant<>(branch.get("key").getAsInt(), value), suggestions ? "minecraft:ask_server" : null);
+            samples.add(new ClientboundCommandsPacket(List.of(new CommandNode(0, new int[]{1}, 0, null), new CommandNode(46 | (suggestions ? 16 : 0), new int[0], 2, argument), new CommandNode(1, new int[0], 0, new CommandNode.Literal("literal"))), 0));
+        }
+        for (int flags = 0; flags < 256; flags++) {
+            CommandNode.Stub stub = (flags & 3) == 2 ? new CommandNode.Argument("argument", new Variant<>(0, Unit.INSTANCE), (flags & 16) != 0 ? "minecraft:ask_server" : null)
+                : (flags & 3) == 1 ? new CommandNode.Literal("literal") : null;
+            samples.add(new ClientboundCommandsPacket(List.of(new CommandNode(flags, new int[0], 9, stub)), 0));
+        }
         for (var entry : GeneratedProtocol.registry().entries().values()) {
             for (int variant = 0; variant < 3; variant++) samples.add((Packet) GeneratedRoundTripTest.sample(entry.type(), "", variant, models));
             var model = models.get(entry.type().getName());
@@ -107,6 +119,7 @@ class VanillaCompatibilityTest {
             loader.loadClass("net.minecraft.server.Bootstrap").getMethod("bootStrap").invoke(null);
             Object builtIns = loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField("REGISTRY").get(null);
             Object registries = worldRegistries(loader, builtIns, models);
+            auditPacketIds(loader);
             Class<?> streamCodec = loader.loadClass("net.minecraft.network.codec.StreamCodec");
             Method decode = streamCodec.getMethod("decode", Object.class);
             Method encode = streamCodec.getMethod("encode", Object.class, Object.class);
@@ -143,6 +156,8 @@ class VanillaCompatibilityTest {
     @Test void registryKeepsTheCompleteCatalogueAndBundleOffset() {
         assertEquals(777, GeneratedProtocol.PROTOCOL_VERSION);
         assertEquals(260, GeneratedProtocol.DESCRIPTORS.size());
+        assertEquals(260, GeneratedProtocol.registry().entries().size());
+        assertTrue(GeneratedProtocol.DESCRIPTORS.stream().allMatch(GeneratedProtocol.Descriptor::supported));
         var play = GeneratedProtocol.DESCRIPTORS.stream().filter(d -> d.key().state() == PacketRegistry.State.PLAY && d.key().flow() == PacketRegistry.Flow.CLIENTBOUND).toList();
         assertEquals("minecraft:bundle_delimiter", play.getFirst().name());
         assertEquals(0, play.getFirst().key().id());
@@ -152,6 +167,31 @@ class VanillaCompatibilityTest {
             if (!descriptor.supported()) assertFalse(descriptor.reason().isBlank());
         }
     }
+    private static void auditPacketIds(ClassLoader loader) throws Exception {
+        java.util.Set<String> owners = new java.util.TreeSet<>();
+        try (var input = GeneratedProtocol.class.getResourceAsStream("/packetforge/protocol.json"); var reader = new java.io.InputStreamReader(input, java.nio.charset.StandardCharsets.UTF_8)) {
+            var report = com.google.gson.JsonParser.parseReader(reader).getAsJsonObject();
+            for (var registration : report.getAsJsonArray("registrations")) owners.add(registration.getAsJsonObject().get("source").getAsString());
+        }
+        Class<?> provider = loader.loadClass("net.minecraft.network.ProtocolInfo$DetailsProvider"), detailsType = loader.loadClass("net.minecraft.network.ProtocolInfo$Details"), visitor = loader.loadClass("net.minecraft.network.ProtocolInfo$Details$PacketVisitor");
+        Class<?> packetType = loader.loadClass("net.minecraft.network.protocol.PacketType");
+        var actual = new java.util.HashMap<PacketRegistry.Key, String>();
+        for (String owner : owners) for (var field : loader.loadClass(owner).getFields()) {
+            if (!java.lang.reflect.Modifier.isStatic(field.getModifiers()) || !provider.isAssignableFrom(field.getType())) continue;
+            Object details = provider.getMethod("details").invoke(field.get(null));
+            var state = PacketRegistry.State.valueOf(((Enum<?>) detailsType.getMethod("id").invoke(details)).name());
+            var flow = PacketRegistry.Flow.valueOf(((Enum<?>) detailsType.getMethod("flow").invoke(details)).name());
+            Object callback = java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[]{visitor}, (proxy, method, arguments) -> {
+                var key = new PacketRegistry.Key(state, flow, (Integer) arguments[1]);
+                assertNull(actual.put(key, packetType.getMethod("id").invoke(arguments[0]).toString()), "Duplicate vanilla packet ID " + key); return null;
+            });
+            detailsType.getMethod("listPackets", visitor).invoke(details, callback);
+        }
+        var expected = new java.util.HashMap<PacketRegistry.Key, String>();
+        for (var descriptor : GeneratedProtocol.DESCRIPTORS) expected.put(descriptor.key(), descriptor.name());
+        assertEquals(expected, actual, "Every generated packet state, direction, ID, and name must match vanilla");
+        System.out.println("Verified " + actual.size() + " packet IDs against vanilla protocol details");
+    }
     private static void auditDispatches(ClassLoader loader, java.util.Map<String, com.google.gson.JsonObject> models, Object registries,
             Class<?> byteBuf, Class<?> unpooled, Class<?> friendly, Class<?> registryAccess, Method decode, Method encode) throws Exception {
         Class<?> registryType = loader.loadClass("net.minecraft.core.Registry");
@@ -159,12 +199,13 @@ class VanillaCompatibilityTest {
         for (var definition : models.entrySet()) {
             if (!definition.getKey().startsWith("$dispatch:")) continue;
             var dispatch = definition.getValue(); String name = dispatch.get("name").getAsString();
+            boolean commandArgument = dispatch.get("registry").getAsString().equals("COMMAND_ARGUMENT_TYPE");
             boolean enumActions = dispatch.get("originalExpression").getAsString().startsWith("enum-actions:");
             boolean enumConstructor = dispatch.get("originalExpression").getAsString().startsWith("enum-constructor:");
             boolean enumOperation = dispatch.get("originalExpression").getAsString().startsWith("enum-decoder:");
             boolean entityMetadata = dispatch.get("registry").getAsString().equals("ENTITY_DATA_SERIALIZERS");
             Class<?> serializerTable = entityMetadata ? loader.loadClass("net.minecraft.network.syncher.EntityDataSerializers") : null;
-            Object defaultOriginal = entityMetadata || enumOperation || enumConstructor || enumActions ? null : loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
+            Object defaultOriginal = entityMetadata || enumOperation || enumConstructor || enumActions || commandArgument ? null : loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
             @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) GeneratedWireCodecs.class.getField(name).get(null);
             var cases = dispatch.getAsJsonArray("cases"); String registryName = dispatch.get("registry").getAsString();
             String[] registryNames = registryName.isEmpty() || entityMetadata ? new String[0] : registryName.split("\\|");
@@ -182,6 +223,7 @@ class VanillaCompatibilityTest {
                     assertSame(serializerTable.getField(branch.get("name").getAsString()).get(null), serializer, "Entity serializer ID " + key);
                     original = loader.loadClass("net.minecraft.network.syncher.EntityDataSerializer").getMethod("codec").invoke(serializer);
                 }
+                if (commandArgument) original = registryType.getMethod("byId", int.class).invoke(loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField("COMMAND_ARGUMENT_TYPE").get(null), (Integer) key);
                 final Object originalCodec = original;
                 if (registryNames.length > 0) {
                     String registryField = registryNames.length == 1 ? registryNames[0] : registryNames[keyName.startsWith("left:") ? 0 : 1];
@@ -211,7 +253,7 @@ class VanillaCompatibilityTest {
                     Object inputRaw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) expected), outputRaw = unpooled.getMethod("buffer").invoke(null);
                     try {
                         Object input = friendly.getConstructor(byteBuf, registryAccess).newInstance(inputRaw, registries), output = friendly.getConstructor(byteBuf, registryAccess).newInstance(outputRaw, registries);
-                        if (entityMetadata) {
+                        if (entityMetadata || commandArgument) {
                             Class<?> varInt = loader.loadClass("net.minecraft.network.VarInt");
                             assertEquals(key, varInt.getMethod("read", byteBuf).invoke(null, inputRaw));
                             varInt.getMethod("write", byteBuf, int.class).invoke(null, outputRaw, (Integer) key);
@@ -242,6 +284,10 @@ class VanillaCompatibilityTest {
                             } else {
                                 var writer = java.util.Arrays.stream(parsed.getClass().getDeclaredMethods()).filter(m -> m.getName().equals(dispatch.get("originalExpression").getAsString().split(":")[2]) && m.getParameterCount() == 1 && !m.isBridge()).findFirst().orElseThrow(); writer.setAccessible(true); writer.invoke(parsed, output);
                             }
+                        } else if (commandArgument) {
+                            var reader = java.util.Arrays.stream(originalCodec.getClass().getMethods()).filter(m -> m.getName().equals("deserializeFromNetwork") && !m.isBridge()).findFirst().orElseThrow(); reader.setAccessible(true);
+                            Object parsed = reader.invoke(originalCodec, input);
+                            var writer = java.util.Arrays.stream(originalCodec.getClass().getMethods()).filter(m -> m.getName().equals("serializeToNetwork") && !m.isBridge()).findFirst().orElseThrow(); writer.setAccessible(true); writer.invoke(originalCodec, parsed, output);
                         } else {
                             Object parsed = decode.invoke(originalCodec, input); encode.invoke(originalCodec, output, parsed);
                         }

@@ -45,7 +45,7 @@ final class Artifacts {
         JsonObject download = meta.getAsJsonObject("downloads").getAsJsonObject("server");
         Path bundle = directory.resolve("server-bundle.jar");
         fetch(URI.create(download.get("url").getAsString()), bundle, "SHA-1", download.get("sha1").getAsString());
-        Path jar = directory.resolve("minecraft.jar");
+        Path jar = directory.resolve("minecraft.jar"); Path brigadier = null;
         try (ZipFile zip = new ZipFile(bundle.toFile())) {
             String[] entry = new String(zip.getInputStream(zip.getEntry("META-INF/versions.list")).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).strip().split("\\t");
             extract(zip, "META-INF/versions/" + entry[2], jar, entry[0]);
@@ -57,6 +57,7 @@ final class Artifacts {
                 Path library = libraries.resolve(item[2]).normalize();
                 if (!library.startsWith(libraries)) throw new IOException("Invalid library path");
                 extract(zip, "META-INF/libraries/" + item[2], library, item[0]);
+                if (item[1].startsWith("com.mojang:brigadier:")) brigadier = library;
             }
         }
         int protocol;
@@ -71,17 +72,31 @@ final class Artifacts {
             deleteTree(sources);
             Files.createDirectories(sources);
             Path log = directory.resolve("vineflower.log");
-            String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
             System.out.println("Decompiling Minecraft " + version + " with Vineflower " + VINEFLOWER + "; log: " + log);
-            Process process = new ProcessBuilder(java, "-Xmx3g", "-cp", System.getProperty("java.class.path"),
-                "org.jetbrains.java.decompiler.main.decompiler.ConsoleDecompiler", "--folder", "--log-level=warn", "--thread-count=4", "--skip-extra-files=true", jar.toString(), sources.toString())
-                .redirectErrorStream(true).redirectOutput(log.toFile()).start();
-            if (process.waitFor() != 0) throw new IOException("Vineflower failed. Read " + log);
+            decompile(jar, sources, log);
             if (!Files.exists(sources.resolve("net/minecraft/network/protocol/Packet.java"))) throw new IOException("Vineflower did not produce expected named sources");
             Files.writeString(marker, fingerprint);
         }
-        return new Input(sources, protocol, Map.of("version", version, "protocol", Integer.toString(protocol), "metadataSha1", locked.get("sha1").getAsString(),
+        if (brigadier == null) throw new IOException("Server bundle does not contain Brigadier");
+        String brigadierHash = digest(brigadier, "SHA-256");
+        Path dependencyMarker = directory.resolve("brigadier-decompiled.txt"); String dependencyFingerprint = brigadierHash + " vineflower=" + VINEFLOWER;
+        if (!Files.exists(dependencyMarker) || !Files.readString(dependencyMarker).equals(dependencyFingerprint) || !Files.exists(sources.resolve("com/mojang/brigadier/arguments/StringArgumentType.java"))) {
+            Path log = directory.resolve("brigadier-vineflower.log");
+            System.out.println("Decompiling bundled Brigadier with Vineflower " + VINEFLOWER + "; log: " + log);
+            deleteTree(sources.resolve("com/mojang/brigadier"));
+            decompile(brigadier, sources, log);
+            if (!Files.exists(sources.resolve("com/mojang/brigadier/arguments/StringArgumentType.java"))) throw new IOException("Brigadier sources are missing");
+            Files.writeString(dependencyMarker, dependencyFingerprint);
+        }
+        return new Input(sources, protocol, Map.of("brigadierSha256", brigadierHash, "version", version, "protocol", Integer.toString(protocol), "metadataSha1", locked.get("sha1").getAsString(),
             "serverSha1", download.get("sha1").getAsString(), "minecraftSha256", jarHash, "vineflower", VINEFLOWER));
+    }
+    private void decompile(Path jar, Path sources, Path log) throws Exception {
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        Process process = new ProcessBuilder(java, "-Xmx3g", "-cp", System.getProperty("java.class.path"),
+            "org.jetbrains.java.decompiler.main.decompiler.ConsoleDecompiler", "--folder", "--log-level=warn", "--thread-count=4", "--skip-extra-files=true", jar.toString(), sources.toString())
+            .redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        if (process.waitFor() != 0) throw new IOException("Vineflower failed. Read " + log);
     }
     private void extract(ZipFile zip, String entry, Path path, String sha256) throws Exception {
         if (Files.exists(path) && digest(path, "SHA-256").equals(sha256)) return;

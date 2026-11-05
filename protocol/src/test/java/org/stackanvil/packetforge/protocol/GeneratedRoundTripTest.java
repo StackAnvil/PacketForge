@@ -51,6 +51,9 @@ class GeneratedRoundTripTest {
             assertNotNull(stream);
             try (var reader = new InputStreamReader(stream, java.nio.charset.StandardCharsets.UTF_8)) {
                 var report = JsonParser.parseReader(reader).getAsJsonObject();
+                assertEquals(260, report.get("totalRegistrations").getAsInt());
+                assertEquals(260, report.get("generatedRegistrations").getAsInt());
+                assertEquals(0, report.getAsJsonObject("registryGaps").size(), "Unresolved registry payloads");
                 for (var model : report.getAsJsonArray("models")) { var object = model.getAsJsonObject(); models.put(object.get("generatedName").getAsString(), object); }
                 for (var dispatch : report.getAsJsonArray("dispatches")) { var object = dispatch.getAsJsonObject(); models.put("$dispatch:" + object.get("name").getAsString(), object); }
             }
@@ -182,6 +185,7 @@ class GeneratedRoundTripTest {
         if (clazz == FloatVector3.class) return new FloatVector3(variant, -variant, variant * 2);
         if (clazz == Quaternion.class) return new Quaternion(variant, -variant, variant, 1);
         if (clazz == ChunkPosition.class) return new ChunkPosition(-variant, variant);
+        if (clazz == CommandNode.class) return new CommandNode(0, new int[0], 0, null);
         if (clazz == UUID.class) return new UUID(variant, -variant);
         if (clazz == BlockPosition.class) return new BlockPosition(-variant, variant, variant);
         if (clazz.isEnum()) { Object[] values = clazz.getEnumConstants(); return values[variant % values.length]; }

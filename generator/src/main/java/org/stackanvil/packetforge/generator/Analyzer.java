@@ -201,9 +201,11 @@ final class Analyzer {
             Expression codec = declaration.getFieldByName(codecField).map(f -> f.getVariable(0).getInitializer().orElseThrow())
                 .orElseGet(() -> { if (!codecField.equals("STREAM_CODEC")) throw new Unsupported("Missing named codec field: " + name + "." + codecField); return StaticJavaParser.parseExpression("Packet.codec(" + declaration.getNameAsString() + "::write, " + declaration.getNameAsString() + "::new)"); });
             List<Field> fields;
-            Program program = null; String decodeFailure = "";
+            Program program = null; String decodeFailure = ""; List<String> extraGuards = List.of();
             try {
-            if (name.equals("net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket")) {
+            if (name.equals("net.minecraft.network.protocol.game.ClientboundCommandsPacket")) {
+                var lowered = new CommandPacketAnalyzer(this).lower(codec, source); fields = lowered.fields(); extraGuards = lowered.validations();
+            } else if (name.equals("net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket")) {
                 var lowered = new ActionSetAnalyzer(this).lower(codec, source, generated); fields = lowered.fields(); program = lowered.program();
             } else if (Set.of("net.minecraft.network.protocol.login.ClientboundCustomQueryPacket", "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket").contains(name)) {
                 fields = new LoginQueryAnalyzer(this).lower(codec, source);
@@ -229,6 +231,7 @@ final class Analyzer {
                 fields = models.get(underlying.shape().substring(6)).fields();
             } else { throw new Unsupported("Unsupported codec declaration: " + shortText(codec)); }
             } catch (Unsupported original) {
+                if (Set.of("net.minecraft.network.protocol.game.ClientboundCommandsPacket", "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket", "net.minecraft.network.protocol.login.ClientboundCustomQueryPacket", "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket").contains(name)) throw original;
                 if (codec instanceof MethodCallExpr composite && composite.getScope().map(Object::toString).orElse("").equals("StreamCodec") && composite.getNameAsString().equals("composite")) {
                     Wire projection = compositeWire(composite, source);
                     fields = models.get(projection.shape().substring("model:".length())).fields();
@@ -250,7 +253,7 @@ final class Analyzer {
                     }
                 }
             }
-            List<String> guards = new ArrayList<>(validations.getOrDefault(name, List.of())); guards.addAll(recordGuards(source, fields));
+            List<String> guards = new ArrayList<>(validations.getOrDefault(name, List.of())); guards.addAll(extraGuards); guards.addAll(recordGuards(source, fields));
             Model model = new Model(key, generated, fields, List.of(), packet, List.copyOf(guards), program, "", codecField, decodeFailure);
             models.put(key, model); return model;
         } catch (Unsupported e) { failures.put(key, e.getMessage()); throw e; }
@@ -355,6 +358,7 @@ final class Analyzer {
         if (!call.getScope().get().toString().equals(buffer) || !call.getNameAsString().startsWith("read")) throw new Unsupported("Read invokes a helper or transform: " + shortText(call));
         String operation = call.getNameAsString().substring(4);
         if (SCALARS.containsKey(operation) && call.getArguments().isEmpty()) return scalar(operation);
+        if (Set.of("RegistryKey", "ResourceKey").contains(operation) && call.getArguments().isEmpty()) return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         if (operation.equals("Nbt") && call.getArguments().isEmpty()) return new Wire("org.stackanvil.packetforge.commons.NbtTag.Compound", "NbtCodecs.NULLABLE_COMPOUND", "NBT_COMPOUND_NULLABLE");
         if (operation.equals("Utf") && call.getArguments().size() <= 1) return string(call.getArguments().isEmpty() ? "32767" : integer(call.getArgument(0), source));
         if (operation.equals("ByteArray") && call.getArguments().size() <= 1) return new Wire("byte[]", "WireCodecs.byteArray(" + (call.getArguments().isEmpty() ? "Integer.MAX_VALUE" : integer(call.getArgument(0), source)) + ")", "byteArray");
@@ -406,6 +410,7 @@ final class Analyzer {
             return scalar;
         }
         if (operation.equals("Utf") && call.getArguments().size() <= 2) return string(call.getArguments().size() == 1 ? "32767" : integer(call.getArgument(1), source));
+        if (operation.equals("ResourceKey") && call.getArguments().size() == 1) return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         if (operation.equals("Nbt") && call.getArguments().size() == 1) return new Wire("org.stackanvil.packetforge.commons.NbtTag.Compound", "NbtCodecs.NULLABLE_COMPOUND", "NBT_COMPOUND_NULLABLE");
         if (operation.equals("Enum") && call.getArguments().size() == 1 && read.shape().startsWith("enum:")) return read;
         if (operation.equals("ByteArray") && call.getArguments().size() == 1) return new Wire("byte[]", "WireCodecs.byteArray(Integer.MAX_VALUE)", "byteArray");

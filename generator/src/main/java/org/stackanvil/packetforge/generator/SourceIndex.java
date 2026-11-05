@@ -59,7 +59,7 @@ final class SourceIndex {
         Source source = source(name);
         String pkg = source.unit().getPackageDeclaration().orElseThrow().getNameAsString();
         String local = name.substring(pkg.length() + 1).replace('.', '_');
-        String target = pkg.startsWith("net.minecraft.network.protocol.") ? "packet." + pkg.substring("net.minecraft.network.protocol.".length()) : "type." + pkg.substring("net.minecraft.".length());
+        String target = pkg.startsWith("net.minecraft.network.protocol.") ? "packet." + pkg.substring("net.minecraft.network.protocol.".length()) : pkg.startsWith("net.minecraft.") ? "type." + pkg.substring("net.minecraft.".length()) : "type.external." + pkg;
         return "org.stackanvil.packetforge.protocol." + target + "." + local;
     }
     static final class Unsupported extends RuntimeException {

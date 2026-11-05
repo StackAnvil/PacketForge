@@ -13,7 +13,7 @@ import org.stackanvil.packetforge.protocol.packet.game.ServerboundCommandSuggest
 import org.stackanvil.packetforge.protocol.packet.game.ServerboundSetCreativeModeSlotPacket;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Differential checks for named codecs, context policies, and intentionally discarded custom data. */
+/** Differential checks for context policies, command layouts, and intentionally discarded data. */
 final class VanillaVariantAudit {
     private final ClassLoader loader;
     private final Map<String, JsonObject> models;
@@ -26,8 +26,89 @@ final class VanillaVariantAudit {
     }
     static void run(ClassLoader loader, Map<String, JsonObject> models, Object registries, Class<?> byteBuf, Class<?> unpooled, Class<?> friendly, Class<?> registryAccess, Method decode, Method encode) throws Exception {
         var audit = new VanillaVariantAudit(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
-        audit.named(); audit.fallbacks(); audit.context(); audit.loginQueries(); audit.actionFailures();
-        System.out.println("Verified " + audit.compared + " named-codec, context, and custom-payload boundary cases against vanilla");
+        audit.named(); audit.fallbacks(); audit.context(); audit.loginQueries(); audit.actionFailures(); audit.commands(); audit.numericArgumentFlags();
+        System.out.println("Verified " + audit.compared + " named-codec, context, command, and payload boundary cases against vanilla");
+    }
+    private void commands() throws Exception {
+        String name = "org.stackanvil.packetforge.protocol.packet.game.ClientboundCommandsPacket";
+        @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) Class.forName(name).getField("CODEC").get(null);
+        Object source = source(models.get(name));
+        var trees = java.util.List.of(
+            java.util.List.<CommandNode>of(),
+            java.util.List.of(new CommandNode(0, new int[]{-1, 9}, 0, null)),
+            java.util.List.of(new CommandNode(0, new int[]{1}, 0, null), new CommandNode(8, new int[0], 0, null)),
+            java.util.List.of(new CommandNode(0, new int[]{0}, 0, null)),
+            java.util.List.of(new CommandNode(8, new int[0], 0, null)),
+            java.util.List.of(new CommandNode(0, new int[]{1}, 0, null), new CommandNode(0, new int[]{0}, 0, null)),
+            java.util.List.of(new CommandNode(8, new int[0], 1, null), new CommandNode(8, new int[0], 0, null)));
+        for (int index = 0; index < trees.size(); index++) {
+            ByteBuf buffer = Unpooled.buffer(); byte[] bytes;
+            try { WireCodecs.list(CommandTreeCodecs.node(Map.of()), Integer.MAX_VALUE).encode(buffer, trees.get(index)); WireCodecs.VAR_INT.encode(buffer, -1); bytes = new byte[buffer.readableBytes()]; buffer.readBytes(bytes); }
+            finally { buffer.release(); }
+            ByteBuf input = Unpooled.wrappedBuffer(bytes);
+            try {
+                if (index < 3) {
+                    Object value = generated.decode(input); assertFalse(input.isReadable()); assertArrayEquals(bytes, body(generated, value)); assertArrayEquals(bytes, sourceEncode(source, sourceDecode(source, bytes)));
+                } else {
+                    var failure = assertThrows(IllegalStateException.class, () -> generated.decode(input));
+                    var vanilla = assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes));
+                    assertEquals(failure.getMessage(), vanilla.getCause().getMessage());
+                }
+                compared++;
+            } finally { input.release(); }
+        }
+        for (int id : new int[]{-1, 62, 1000000}) for (int flags : new int[]{2, 18}) {
+            ByteBuf buffer = Unpooled.buffer(); byte[] bytes;
+            try { buffer.writeByte(1).writeByte(flags).writeByte(0); WireCodecs.STRING.encode(buffer, "unknown"); WireCodecs.VAR_INT.encode(buffer, id); buffer.writeByte(0); bytes = new byte[buffer.readableBytes()]; buffer.readBytes(bytes); }
+            finally { buffer.release(); }
+            ByteBuf input = Unpooled.wrappedBuffer(bytes);
+            try {
+                Object value = generated.decode(input); assertFalse(input.isReadable());
+                assertArrayEquals(sourceEncode(source, sourceDecode(source, bytes)), body(generated, value), "Unknown argument IDs produce an absent stub without consuming suggestions"); compared++;
+            } finally { input.release(); }
+        }
+        for (byte[] bytes : new byte[][]{new byte[0], new byte[]{1}, new byte[]{1, 0}, new byte[]{1, 0, 1}, new byte[]{1, 18, 0, 1, 'x', 0, 2}}) {
+            ByteBuf input = Unpooled.wrappedBuffer(bytes);
+            try { assertThrows(RuntimeException.class, () -> generated.decode(input)); }
+            finally { input.release(); }
+            assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes)); compared++;
+        }
+    }
+    private void numericArgumentFlags() throws Exception {
+        var table = models.values().stream().filter(m -> m.has("registry") && m.get("registry").getAsString().equals("COMMAND_ARGUMENT_TYPE")).findFirst().orElseThrow();
+        Object registry = loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField("COMMAND_ARGUMENT_TYPE").get(null);
+        for (var entry : table.getAsJsonArray("cases")) {
+            var branch = entry.getAsJsonObject(); String name = branch.get("name").getAsString();
+            if (!java.util.Set.of("brigadier:float", "brigadier:double", "brigadier:integer", "brigadier:long").contains(name)) continue;
+            var schema = branch.getAsJsonObject("value"); Class<?> generatedType = Class.forName(schema.get("type").getAsString());
+            @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) generatedType.getField("CODEC").get(null);
+            Object source = loader.loadClass("net.minecraft.core.Registry").getMethod("byId", int.class).invoke(registry, branch.get("key").getAsInt());
+            var reader = java.util.Arrays.stream(source.getClass().getMethods()).filter(m -> m.getName().equals("deserializeFromNetwork") && !m.isBridge()).findFirst().orElseThrow();
+            var writer = java.util.Arrays.stream(source.getClass().getMethods()).filter(m -> m.getName().equals("serializeToNetwork") && !m.isBridge()).findFirst().orElseThrow();
+            for (int flags = 0; flags < 256; flags++) {
+                ByteBuf bytes = Unpooled.buffer(); byte[] body;
+                try {
+                    bytes.writeByte(flags);
+                    for (int bit : new int[]{1, 2}) if ((flags & bit) != 0) {
+                        switch (name) {
+                            case "brigadier:float" -> bytes.writeFloat(bit == 1 ? -12.5f : Float.POSITIVE_INFINITY);
+                            case "brigadier:double" -> bytes.writeDouble(bit == 1 ? Double.NaN : 123.75);
+                            case "brigadier:integer" -> bytes.writeInt(bit == 1 ? Integer.MIN_VALUE + 1 : Integer.MAX_VALUE - 1);
+                            case "brigadier:long" -> bytes.writeLong(bit == 1 ? Long.MIN_VALUE + 1 : Long.MAX_VALUE - 1);
+                        }
+                    }
+                    body = new byte[bytes.readableBytes()]; bytes.readBytes(body);
+                } finally { bytes.release(); }
+                ByteBuf input = Unpooled.wrappedBuffer(body); byte[] expected;
+                try { Object value = generated.decode(input); assertFalse(input.isReadable()); expected = body(generated, value); }
+                finally { input.release(); }
+                Object sourceInput = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) body), sourceOutput = unpooled.getMethod("buffer").invoke(null);
+                try {
+                    Object value = reader.invoke(source, input(sourceInput)); assertEquals(0, byteBuf.getMethod("readableBytes").invoke(sourceInput)); writer.invoke(source, value, input(sourceOutput));
+                    byte[] actual = new byte[(int) byteBuf.getMethod("readableBytes").invoke(sourceOutput)]; byteBuf.getMethod("readBytes", byte[].class).invoke(sourceOutput, (Object) actual); assertArrayEquals(expected, actual, name + " flags " + flags); compared++;
+                } finally { byteBuf.getMethod("release").invoke(sourceInput); byteBuf.getMethod("release").invoke(sourceOutput); }
+            }
+        }
     }
     private void actionFailures() throws Exception {
         String name = "org.stackanvil.packetforge.protocol.packet.game.ClientboundPlayerInfoUpdatePacket";

@@ -7,10 +7,11 @@ val generateProtocol = tasks.register<JavaExec>("generateProtocol") {
     classpath = project(":generator").extensions.getByType<SourceSetContainer>()["main"].runtimeClasspath
     mainClass.set("org.stackanvil.packetforge.generator.Main")
     inputs.property("minecraftVersion", minecraftVersion)
+    inputs.property("strictCoverage", true)
     inputs.files(project(":generator").fileTree("src/main"))
     outputs.dir(generated)
     args("--version", minecraftVersion.get(), "--cache", rootProject.layout.buildDirectory.dir("minecraft").get().asFile,
-        "--output", generated.get().asFile)
+        "--output", generated.get().asFile, "--strict")
     maxHeapSize = "3g"
 }
 sourceSets.main {

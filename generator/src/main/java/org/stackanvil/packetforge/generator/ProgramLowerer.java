@@ -59,6 +59,10 @@ final class ProgramLowerer {
         } else throw new Unsupported("Not an imperative stream codec");
         return lowerBodies(decode, encode, input, output, constructorMode);
     }
+    Lowered lowerSerializer(MethodDeclaration reader, MethodDeclaration writer) {
+        valueName = writer.getParameter(0).getNameAsString();
+        return lowerBodies(reader.getBody().orElseThrow(() -> new Unsupported("Missing serializer reader body")), writer.getBody().orElseThrow(() -> new Unsupported("Missing serializer writer body")), reader.getParameter(0).getNameAsString(), writer.getParameter(1).getNameAsString(), false);
+    }
     Lowered lowerBodies(BlockStmt decode, BlockStmt encode, String input, String output, boolean constructorMode) {
         decode = decode.clone(); encode = encode.clone();
         if (!decode.findAll(ExplicitConstructorInvocationStmt.class).isEmpty()) {
@@ -371,6 +375,7 @@ final class ProgramLowerer {
         }
         @Override public Visitable visit(FieldAccessExpr field, Void ignored) {
             FieldAccessExpr original = field.clone();
+            if (Set.of("Integer", "Long", "Float", "Double").contains(original.getScope().toString()) && Set.of("MIN_VALUE", "MAX_VALUE").contains(original.getNameAsString())) return field;
             if (original.getNameAsString().equals("length")) { field.setScope((Expression) field.getScope().accept(this, null)); return field; }
             if (original.getScope() instanceof ThisExpr || original.getScope().toString().equals(valueName)) {
                 if (!fields.containsKey(original.getNameAsString())) throw new Unsupported("Unknown imperative field: " + original);
@@ -456,7 +461,7 @@ final class ProgramLowerer {
         throw new Unsupported("Unknown imperative helper: " + method);
     }
     private Wire fieldWire(Expression expression) {
-        if (expression instanceof FieldAccessExpr field && field.getScope() instanceof ThisExpr && fields.containsKey(field.getNameAsString())) return fields.get(field.getNameAsString());
+        if (expression instanceof FieldAccessExpr field && (field.getScope() instanceof ThisExpr || field.getScope().toString().equals(valueName)) && fields.containsKey(field.getNameAsString())) return fields.get(field.getNameAsString());
         throw new Unsupported("Not a known imperative field: " + expression);
     }
     private static String physical(String shape) { return shape.equals("UNSIGNED_BYTE") ? "BYTE" : shape.equals("UNSIGNED_SHORT") ? "SHORT" : shape; }

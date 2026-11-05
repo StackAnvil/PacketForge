@@ -17,7 +17,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: build/minecraft
-          key: minecraft-26.3-vineflower-1.12.0
+          key: minecraft-26.3-vineflower-1.12.0-brigadier
       - run: ./gradlew build --no-daemon
       - uses: actions/upload-artifact@v4
         if: always()
