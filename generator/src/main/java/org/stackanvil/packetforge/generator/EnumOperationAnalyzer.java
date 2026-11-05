@@ -16,6 +16,28 @@ final class EnumOperationAnalyzer {
         this.analyzer = analyzer;
     }
 
+    boolean accepts(Expression codec, SourceIndex.Source source) {
+        if (!(codec instanceof MethodCallExpr call)
+                || call.getArguments().size() != 2
+                || !(call.getArgument(0) instanceof MethodReferenceExpr)
+                || !(call.getArgument(1) instanceof MethodReferenceExpr reader)
+                || !reader.getIdentifier().equals("new")) {
+            return false;
+        }
+        return source.declaration().getMembers().stream()
+                .filter(member -> member instanceof ConstructorDeclaration constructor
+                        && constructor.getParameters().size() == 1
+                        && constructor.getParameter(0).getTypeAsString().endsWith("ByteBuf"))
+                .map(member -> (ConstructorDeclaration) member)
+                .anyMatch(constructor ->
+                        constructor.getBody().getStatements().getLast().orElse(null) instanceof ExpressionStmt statement
+                                && statement.getExpression() instanceof AssignExpr assignment
+                                && assignment.getValue() instanceof MethodCallExpr decode
+                                && decode.getNameAsString().equals("decode")
+                                && decode.getScope().orElse(null) instanceof FieldAccessExpr decoder
+                                && decoder.getScope() instanceof NameExpr);
+    }
+
     List<Field> lower(Expression codec, SourceIndex.Source source) {
         if (!(codec instanceof MethodCallExpr call)
                 || call.getArguments().size() != 2

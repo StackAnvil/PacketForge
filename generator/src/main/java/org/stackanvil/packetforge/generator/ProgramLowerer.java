@@ -37,6 +37,16 @@ final class ProgramLowerer {
         this.generatedName = generatedName;
     }
 
+    static boolean accepts(Expression codec) {
+        return codec instanceof ObjectCreationExpr anonymous
+                        && anonymous.getAnonymousClassBody().isPresent()
+                || codec instanceof MethodCallExpr call
+                        && Set.of("codec", "ofMember", "of").contains(call.getNameAsString())
+                        && call.getArguments().size() == 2
+                        && call.getArgument(0) instanceof MethodReferenceExpr
+                        && call.getArgument(1) instanceof MethodReferenceExpr;
+    }
+
     Lowered lower(Expression codec) {
         BlockStmt decode, encode;
         String input, output;

@@ -515,114 +515,10 @@ final class Analyzer {
                                 + declaration.getNameAsString()
                                 + "::new)");
                     });
-            List<Field> fields;
-            Program program = null;
-            String decodeFailure = "";
-            List<String> extraGuards = List.of();
-            try {
-                if (name.equals("net.minecraft.network.protocol.game.ClientboundCommandsPacket")) {
-                    var lowered = new CommandPacketAnalyzer(this).lower(codec, source);
-                    fields = lowered.fields();
-                    extraGuards = lowered.validations();
-                } else if (name.equals("net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket")) {
-                    var lowered = new ActionSetAnalyzer(this).lower(codec, source, generated);
-                    fields = lowered.fields();
-                    program = lowered.program();
-                } else if (Set.of(
-                                "net.minecraft.network.protocol.login.ClientboundCustomQueryPacket",
-                                "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket")
-                        .contains(name)) {
-                    fields = new LoginQueryAnalyzer(this).lower(codec, source);
-                } else if (codec instanceof MethodCallExpr call
-                        && call.getScope().map(Object::toString).orElse("").equals("StreamCodec")
-                        && call.getNameAsString().equals("unit")) {
-                    fields = List.of();
-                } else if (codec instanceof MethodCallExpr call
-                        && call.getScope().map(Object::toString).orElse("").equals("StreamCodec")
-                        && call.getNameAsString().equals("composite")) {
-                    fields = composite(call, source);
-                } else if (codec instanceof MethodCallExpr call
-                        && Set.of("Packet", "StreamCodec", "CustomPacketPayload")
-                                .contains(call.getScope().map(Object::toString).orElse(""))
-                        && Set.of("codec", "ofMember").contains(call.getNameAsString())) {
-                    fields = memberCodec(call, source);
-                } else if (codec instanceof MethodCallExpr call
-                        && call.getNameAsString().equals("map")
-                        && call.getArguments().size() == 2
-                        && call.getArgument(0) instanceof MethodReferenceExpr constructor
-                        && constructor.getIdentifier().equals("new")
-                        && index.resolve(constructor.getScope().toString(), source)
-                                .equals(name)) {
-                    String field = getterField(call.getArgument(1), source);
-                    Wire underlying = codec(call.getScope().orElseThrow(), source);
-                    fields = List.of(new Field(field, declaredType(field, source), underlying, underlying));
-                } else if (codec instanceof NameExpr || codec instanceof FieldAccessExpr) {
-                    Wire underlying = codec(codec, source);
-                    if (underlying.shape().startsWith("model:"))
-                        fields = models.get(underlying.shape().substring(6)).fields();
-                    else throw new Unsupported("Codec alias does not construct this value");
-                } else if (codec instanceof ObjectCreationExpr anonymous
-                        && anonymous.getAnonymousClassBody().isPresent()) {
-                    var lowered = new DelegatingCodecAnalyzer(this).lower(anonymous, source);
-                    fields = lowered.fields();
-                    decodeFailure = lowered.decodeFailure();
-                } else if (codec instanceof MethodCallExpr factory
-                        && factory.getScope().isEmpty()) {
-                    Wire underlying = new StaticCodecResolver(this)
-                            .factory(
-                                    factory.clone()
-                                            .setScope(new NameExpr(
-                                                    source.declaration().getNameAsString())),
-                                    source);
-                    if (!underlying.shape().startsWith("model:"))
-                        throw new Unsupported("Codec factory does not construct its declared model");
-                    fields = models.get(underlying.shape().substring(6)).fields();
-                } else {
-                    throw new Unsupported("Unsupported codec declaration: " + shortText(codec));
-                }
-            } catch (Unsupported original) {
-                if (Set.of(
-                                "net.minecraft.network.protocol.game.ClientboundCommandsPacket",
-                                "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket",
-                                "net.minecraft.network.protocol.login.ClientboundCustomQueryPacket",
-                                "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket")
-                        .contains(name)) throw original;
-                if (codec instanceof MethodCallExpr composite
-                        && composite.getScope().map(Object::toString).orElse("").equals("StreamCodec")
-                        && composite.getNameAsString().equals("composite")) {
-                    Wire projection = compositeWire(composite, source);
-                    fields = models.get(projection.shape().substring("model:".length()))
-                            .fields();
-                } else
-                    try {
-                        try {
-                            fields = new EnumOperationAnalyzer(this).lower(codec, source);
-                        } catch (Unsupported operationFailure) {
-                            if (source.declaration() instanceof ClassOrInterfaceDeclaration clazz
-                                    && clazz.isAbstract()) {
-                                fields = new PolymorphicConstructorAnalyzer(this).lower(codec, source);
-                            } else {
-                                var lowered = new ProgramLowerer(this, source, generated).lower(codec);
-                                fields = lowered.fields();
-                                program = lowered.program();
-                            }
-                        }
-                    } catch (Unsupported programFailure) {
-                        try {
-                            fields = new LinearWireProjection(this).lower(codec, source);
-                        } catch (Unsupported projectionFailure) {
-                            if (!programFailure.getMessage().equals("Not an imperative stream codec"))
-                                throw new Unsupported(original.getMessage()
-                                        + "; imperative: "
-                                        + programFailure.getMessage()
-                                        + "; projection: "
-                                        + projectionFailure.getMessage());
-                            throw original;
-                        }
-                    }
-            }
+            ModelLayout layout = new ModelExtractor(this).extract(codec, source, generated);
+            List<Field> fields = layout.fields();
             List<String> guards = new ArrayList<>(validations.getOrDefault(name, List.of()));
-            guards.addAll(extraGuards);
+            guards.addAll(layout.validations());
             guards.addAll(recordGuards(source, fields));
             Model model = new Model(
                     key,
@@ -631,10 +527,10 @@ final class Analyzer {
                     List.of(),
                     packet,
                     List.copyOf(guards),
-                    program,
+                    layout.program(),
                     "",
                     codecField,
-                    decodeFailure);
+                    layout.decodeFailure());
             models.put(key, model);
             return model;
         } catch (Unsupported e) {
@@ -645,7 +541,7 @@ final class Analyzer {
         }
     }
 
-    private List<Field> composite(MethodCallExpr call, SourceIndex.Source source) {
+    List<Field> composite(MethodCallExpr call, SourceIndex.Source source) {
         var args = call.getArguments();
         if (args.isEmpty()
                 || args.size() % 2 != 1
@@ -684,7 +580,7 @@ final class Analyzer {
         return fields;
     }
 
-    private List<Field> memberCodec(MethodCallExpr call, SourceIndex.Source source) {
+    List<Field> memberCodec(MethodCallExpr call, SourceIndex.Source source) {
         if (source.declaration() instanceof ClassOrInterfaceDeclaration clazz
                 && !clazz.getExtendedTypes().isEmpty())
             throw new Unsupported("Inherited packet/value layout: " + source.name());
@@ -1867,7 +1763,7 @@ final class Analyzer {
                         source);
     }
 
-    private Wire compositeWire(MethodCallExpr call, SourceIndex.Source source) {
+    Wire compositeWire(MethodCallExpr call, SourceIndex.Source source) {
         call = call.clone();
         for (int i = 0; i < call.getArguments().size(); i++) {
             Expression argument = call.getArgument(i);
@@ -2170,7 +2066,7 @@ final class Analyzer {
         return Set.of("FriendlyByteBuf", "RegistryFriendlyByteBuf", "ByteBuf").contains(type);
     }
 
-    private static String shortText(Node node) {
+    static String shortText(Node node) {
         String text = node.toString().replaceAll("\\s+", " ");
         return text.length() > 180 ? text.substring(0, 177) + "..." : text;
     }
