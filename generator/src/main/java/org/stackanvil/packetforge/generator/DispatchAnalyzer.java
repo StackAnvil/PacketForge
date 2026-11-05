@@ -18,16 +18,15 @@ final class DispatchAnalyzer {
 
     Wire lower(MethodCallExpr dispatch, SourceIndex.Source source) {
         Wire key = analyzer.codec(dispatch.getScope().orElseThrow(), source);
-        String identity =
-                source.name()
-                        + "#"
-                        + key.type()
-                        + "#"
-                        + key.codec()
-                        + "#"
-                        + key.shape().replace("net.minecraft.core.registries.", "")
-                        + "#"
-                        + dispatch.getArguments();
+        String identity = source.name()
+                + "#"
+                + key.type()
+                + "#"
+                + key.codec()
+                + "#"
+                + key.shape().replace("net.minecraft.core.registries.", "")
+                + "#"
+                + dispatch.getArguments();
         String name = "dispatch_" + Integer.toUnsignedString(identity.hashCode());
         if (analyzer.dispatches.containsKey(name)) return reference(analyzer.dispatches.get(name));
         if (!analyzer.activeDispatches.add(name))
@@ -38,77 +37,59 @@ final class DispatchAnalyzer {
         try {
             if (!(dispatch.getArgument(1) instanceof MethodReferenceExpr accessor))
                 throw new Unsupported("Dispatch codec selector is not a method reference");
-            var owner =
-                    analyzer.index.source(
-                            analyzer.index.resolve(accessor.getScope().toString(), source));
+            var owner = analyzer.index.source(
+                    analyzer.index.resolve(accessor.getScope().toString(), source));
             List<DispatchCase> cases;
             if (owner.declaration() instanceof EnumDeclaration enumeration)
                 cases = enumeration(enumeration, accessor.getIdentifier(), owner);
-            else if (key.shape().startsWith("REGISTRY:"))
-                cases = registry(dispatch, key, accessor, owner, source);
-            else if (key.shape().startsWith("either<REGISTRY:"))
-                cases = union(key, accessor, owner);
+            else if (key.shape().startsWith("REGISTRY:")) cases = registry(dispatch, key, accessor, owner, source);
+            else if (key.shape().startsWith("either<REGISTRY:")) cases = union(key, accessor, owner);
             else throw new Unsupported("Unknown dispatch key codec: " + dispatch);
             String type = "org.stackanvil.packetforge.commons.Variant<" + boxed(key.type()) + ">";
             List<String> entries = new ArrayList<>();
             for (var branch : cases) {
-                String discriminator =
-                        key.shape().startsWith("enum:")
-                                ? key.type() + "." + branch.key()
-                                : branch.key().contains(":")
-                                        ? "org.stackanvil.packetforge.commons.Either.<Integer, Integer>"
-                                                + branch.key().replace(":", "(")
-                                                + ")"
-                                        : branch.key();
-                entries.add(
-                        "java.util.Map.entry("
-                                + discriminator
-                                + ", (PacketCodec<?>) "
-                                + branch.value().codec()
-                                + ")");
+                String discriminator = key.shape().startsWith("enum:")
+                        ? key.type() + "." + branch.key()
+                        : branch.key().contains(":")
+                                ? "org.stackanvil.packetforge.commons.Either.<Integer, Integer>"
+                                        + branch.key().replace(":", "(")
+                                        + ")"
+                                : branch.key();
+                entries.add("java.util.Map.entry("
+                        + discriminator
+                        + ", (PacketCodec<?>) "
+                        + branch.value().codec()
+                        + ")");
             }
-            Wire implementation =
-                    new Wire(
-                            type,
-                            "WireCodecs.dispatch("
-                                    + key.codec()
-                                    + ", java.util.Map.<"
-                                    + boxed(key.type())
-                                    + ", PacketCodec<?>>ofEntries("
-                                    + String.join(", ", entries)
-                                    + "))",
-                            "dispatch:" + name);
+            Wire implementation = new Wire(
+                    type,
+                    "WireCodecs.dispatch("
+                            + key.codec()
+                            + ", java.util.Map.<"
+                            + boxed(key.type())
+                            + ", PacketCodec<?>>ofEntries("
+                            + String.join(", ", entries)
+                            + "))",
+                    "dispatch:" + name);
             String sourceField = "STREAM_CODEC";
             for (var field : source.declaration().getFields())
                 for (var variable : field.getVariables())
                     if (variable.getInitializer().isPresent()
-                            && variable
-                                    .getInitializer()
-                                    .get()
-                                    .findAll(MethodCallExpr.class)
-                                    .stream()
-                                    .anyMatch(
-                                            c ->
-                                                    c.getNameAsString().equals("dispatch")
-                                                            && c.getArguments()
-                                                                    .equals(
-                                                                            dispatch
-                                                                                    .getArguments())))
+                            && variable.getInitializer().get().findAll(MethodCallExpr.class).stream()
+                                    .anyMatch(c -> c.getNameAsString().equals("dispatch")
+                                            && c.getArguments().equals(dispatch.getArguments())))
                         sourceField = variable.getNameAsString();
-            Dispatch definition =
-                    new Dispatch(
-                            name,
-                            key,
-                            List.copyOf(cases),
-                            source.name(),
-                            dispatch.toString(),
-                            implementation,
-                            key.shape().startsWith("REGISTRY:")
-                                    ? key.shape().substring(key.shape().lastIndexOf('.') + 1)
-                                    : key.shape().startsWith("either<REGISTRY:")
-                                            ? String.join("|", registryNames(key))
-                                            : "",
-                            sourceField);
+            Dispatch definition = new Dispatch(
+                    name,
+                    key,
+                    List.copyOf(cases),
+                    source.name(),
+                    dispatch.toString(),
+                    implementation,
+                    key.shape().startsWith("REGISTRY:")
+                            ? key.shape().substring(key.shape().lastIndexOf('.') + 1)
+                            : key.shape().startsWith("either<REGISTRY:") ? String.join("|", registryNames(key)) : "",
+                    sourceField);
             analyzer.dispatches.put(name, definition);
             return reference(definition);
         } finally {
@@ -125,31 +106,23 @@ final class DispatchAnalyzer {
         String registry = key.shape().substring(key.shape().lastIndexOf('.') + 1);
         String diagnostic = registry + "#" + accessorOwner.name() + "." + accessor.getIdentifier();
         var resolver = new StaticCodecResolver(analyzer);
-        List<RegistrySchema.Entry> entries =
-                new RegistrySchema(analyzer, resolver).entries(registry);
+        List<RegistrySchema.Entry> entries = new RegistrySchema(analyzer, resolver).entries(registry);
         List<DispatchCase> cases = new ArrayList<>();
         List<RegistryGap> gaps = new ArrayList<>();
-        boolean factory =
-                accessorOwner.declaration().getMethodsByName(accessor.getIdentifier()).stream()
-                        .anyMatch(m -> m.isStatic() && m.getParameters().size() == 1);
+        boolean factory = accessorOwner.declaration().getMethodsByName(accessor.getIdentifier()).stream()
+                .anyMatch(m -> m.isStatic() && m.getParameters().size() == 1);
         for (var entry : entries) {
             try {
-                var value =
-                        factory
-                                ? resolver.invoke(
-                                        new StaticCodecResolver.Value(accessor, source),
-                                        List.of(entry.value()))
-                                : resolver.accessor(entry.value(), accessor.getIdentifier());
+                var value = factory
+                        ? resolver.invoke(new StaticCodecResolver.Value(accessor, source), List.of(entry.value()))
+                        : resolver.accessor(entry.value(), accessor.getIdentifier());
                 Wire codec = resolver.codec(value);
                 cases.add(new DispatchCase(Integer.toString(entry.id()), codec, entry.name()));
             } catch (StaticCodecResolver.Rejected rejected) {
-                Wire codec =
-                        new Wire(
-                                "org.stackanvil.packetforge.commons.Unit",
-                                "WireCodecs.rejected("
-                                        + new com.google.gson.Gson().toJson(rejected.getMessage())
-                                        + ")",
-                                "REJECTED:" + rejected.getMessage());
+                Wire codec = new Wire(
+                        "org.stackanvil.packetforge.commons.Unit",
+                        "WireCodecs.rejected(" + new com.google.gson.Gson().toJson(rejected.getMessage()) + ")",
+                        "REJECTED:" + rejected.getMessage());
                 cases.add(new DispatchCase(Integer.toString(entry.id()), codec, entry.name()));
             } catch (Unsupported unsupported) {
                 gaps.add(new RegistryGap(entry.id(), entry.name(), unsupported.getMessage()));
@@ -157,15 +130,14 @@ final class DispatchAnalyzer {
         }
         if (!gaps.isEmpty()) {
             analyzer.registryGaps.put(diagnostic, List.copyOf(gaps));
-            throw new Unsupported(
-                    "Registry "
-                            + registry
-                            + " has "
-                            + gaps.size()
-                            + " unresolved payload codecs; first: "
-                            + gaps.getFirst().name()
-                            + ": "
-                            + gaps.getFirst().reason());
+            throw new Unsupported("Registry "
+                    + registry
+                    + " has "
+                    + gaps.size()
+                    + " unresolved payload codecs; first: "
+                    + gaps.getFirst().name()
+                    + ": "
+                    + gaps.getFirst().reason());
         }
         analyzer.registryGaps.remove(diagnostic);
         return cases;
@@ -173,21 +145,18 @@ final class DispatchAnalyzer {
 
     private List<String> registryNames(Wire key) {
         var names = new ArrayList<String>();
-        var matcher =
-                java.util.regex.Pattern.compile("REGISTRY:(?:[a-zA-Z0-9_.]*\\.)?([A-Z_]+)")
-                        .matcher(key.shape());
+        var matcher = java.util.regex.Pattern.compile("REGISTRY:(?:[a-zA-Z0-9_.]*\\.)?([A-Z_]+)")
+                .matcher(key.shape());
         while (matcher.find()) names.add(matcher.group(1));
         return names;
     }
 
-    private List<DispatchCase> union(
-            Wire key, MethodReferenceExpr accessor, SourceIndex.Source owner) {
+    private List<DispatchCase> union(Wire key, MethodReferenceExpr accessor, SourceIndex.Source owner) {
         // Distribute a mapped Either discriminator over its two registry tables.
-        var initializer =
-                owner.declaration()
-                        .getFieldByName("STREAM_CODEC")
-                        .flatMap(f -> f.getVariable(0).getInitializer())
-                        .orElseThrow(() -> new Unsupported("Union key has no declared codec"));
+        var initializer = owner.declaration()
+                .getFieldByName("STREAM_CODEC")
+                .flatMap(f -> f.getVariable(0).getInitializer())
+                .orElseThrow(() -> new Unsupported("Union key has no declared codec"));
         if (!(initializer instanceof MethodCallExpr mapping)
                 || !mapping.getNameAsString().equals("map")
                 || !(mapping.getArgument(0) instanceof MethodReferenceExpr factory))
@@ -196,15 +165,13 @@ final class DispatchAnalyzer {
         if (factories.size() != 1 || factories.getFirst().getParameters().size() != 1)
             throw new Unsupported("Ambiguous union key factory");
         var body = factories.getFirst().getBody().orElseThrow();
-        if (body.getStatements().size() != 1
-                || !(body.getStatement(0) instanceof ReturnStmt returned))
+        if (body.getStatements().size() != 1 || !(body.getStatement(0) instanceof ReturnStmt returned))
             throw new Unsupported("Union key factory has control flow");
         Expression expression = returned.getExpression().orElseThrow();
         while (expression instanceof CastExpr || expression instanceof EnclosedExpr)
-            expression =
-                    expression instanceof CastExpr cast
-                            ? cast.getExpression()
-                            : expression.asEnclosedExpr().getInner();
+            expression = expression instanceof CastExpr cast
+                    ? cast.getExpression()
+                    : expression.asEnclosedExpr().getInner();
         if (!(expression instanceof MethodCallExpr map)
                 || !map.getNameAsString().equals("map")
                 || map.getArguments().size() != 2
@@ -222,30 +189,21 @@ final class DispatchAnalyzer {
             String registry = registries.get(side), prefix = side == 0 ? "left:" : "right:";
             for (var entry : new RegistrySchema(analyzer, resolver).entries(registry))
                 try {
-                    var receiver =
-                            resolver.invoke(
-                                    new StaticCodecResolver.Value(map.getArgument(side), owner),
-                                    List.of(entry.value()));
-                    Wire codec =
-                            resolver.codec(resolver.accessor(receiver, accessor.getIdentifier()));
+                    var receiver = resolver.invoke(
+                            new StaticCodecResolver.Value(map.getArgument(side), owner), List.of(entry.value()));
+                    Wire codec = resolver.codec(resolver.accessor(receiver, accessor.getIdentifier()));
                     cases.add(new DispatchCase(prefix + entry.id(), codec, entry.name()));
                 } catch (Unsupported unsupported) {
-                    gaps.add(
-                            new RegistryGap(
-                                    entry.id(),
-                                    registry + ":" + entry.name(),
-                                    unsupported.getMessage()));
+                    gaps.add(new RegistryGap(entry.id(), registry + ":" + entry.name(), unsupported.getMessage()));
                 }
         }
-        String diagnostic =
-                String.join("|", registries) + "#" + owner.name() + "." + accessor.getIdentifier();
+        String diagnostic = String.join("|", registries) + "#" + owner.name() + "." + accessor.getIdentifier();
         if (!gaps.isEmpty()) {
             analyzer.registryGaps.put(diagnostic, List.copyOf(gaps));
-            throw new Unsupported(
-                    "Union registry has "
-                            + gaps.size()
-                            + " unresolved payloads; first: "
-                            + gaps.getFirst().reason());
+            throw new Unsupported("Union registry has "
+                    + gaps.size()
+                    + " unresolved payloads; first: "
+                    + gaps.getFirst().reason());
         }
         analyzer.registryGaps.remove(diagnostic);
         return cases;
@@ -258,13 +216,11 @@ final class DispatchAnalyzer {
                 "dispatch:" + dispatch.name());
     }
 
-    private List<DispatchCase> enumeration(
-            EnumDeclaration enumeration, String methodName, SourceIndex.Source source) {
+    private List<DispatchCase> enumeration(EnumDeclaration enumeration, String methodName, SourceIndex.Source source) {
         var methods = enumeration.getMethodsByName(methodName);
         if (methods.size() != 1) throw new Unsupported("Ambiguous enum dispatch accessor");
         var body = methods.getFirst().getBody().orElseThrow();
-        if (body.getStatements().size() != 1
-                || !(body.getStatement(0) instanceof ReturnStmt returned))
+        if (body.getStatements().size() != 1 || !(body.getStatement(0) instanceof ReturnStmt returned))
             throw new Unsupported("Enum dispatch accessor transforms its codec");
         Expression result = returned.getExpression().orElseThrow();
         String field;
@@ -276,18 +232,16 @@ final class DispatchAnalyzer {
                 && call.getScope().orElse(null) instanceof FieldAccessExpr access
                 && access.getScope() instanceof ThisExpr) field = access.getNameAsString();
         else throw new Unsupported("Unknown enum dispatch accessor");
-        var constructors =
-                enumeration.getMembers().stream()
-                        .filter(m -> m instanceof ConstructorDeclaration)
-                        .map(m -> (ConstructorDeclaration) m)
-                        .toList();
+        var constructors = enumeration.getMembers().stream()
+                .filter(m -> m instanceof ConstructorDeclaration)
+                .map(m -> (ConstructorDeclaration) m)
+                .toList();
         if (constructors.size() != 1) throw new Unsupported("Ambiguous enum dispatch constructor");
         var constructor = constructors.getFirst();
         String parameter = null;
         for (var assignment : constructor.findAll(AssignExpr.class))
             if (assignment.getTarget().toString().equals("this." + field)) {
-                if (assignment.getValue() instanceof NameExpr name)
-                    parameter = name.getNameAsString();
+                if (assignment.getValue() instanceof NameExpr name) parameter = name.getNameAsString();
                 else {
                     // Supplier memoization retains the supplied codec function.
                     var references = assignment.getValue().findAll(MethodReferenceExpr.class);
@@ -305,11 +259,8 @@ final class DispatchAnalyzer {
             Expression expression = constant.getArgument(position);
             if (expression instanceof LambdaExpr lambda
                     && lambda.getParameters().isEmpty()
-                    && lambda.getBody() instanceof ExpressionStmt statement)
-                expression = statement.getExpression();
-            cases.add(
-                    new DispatchCase(
-                            constant.getNameAsString(), analyzer.codec(expression, source)));
+                    && lambda.getBody() instanceof ExpressionStmt statement) expression = statement.getExpression();
+            cases.add(new DispatchCase(constant.getNameAsString(), analyzer.codec(expression, source)));
         }
         return cases;
     }

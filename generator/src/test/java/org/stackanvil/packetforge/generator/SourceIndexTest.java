@@ -9,14 +9,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SourceIndexTest {
-    @TempDir Path temporary;
+    @TempDir
+    Path temporary;
 
     @Test
     void bundledLibraryEnumsGetStandaloneNamesAndRetainTheirDeclaredOrder() throws Exception {
         Path file = temporary.resolve("com/mojang/fixture/External.java");
         Files.createDirectories(file.getParent());
-        Files.writeString(
-                file, "package com.mojang.fixture; class External { enum Kind { SECOND, FIRST } }");
+        Files.writeString(file, "package com.mojang.fixture; class External { enum Kind { SECOND, FIRST } }");
         var analyzer = new Analyzer(temporary);
         var model = analyzer.model("com.mojang.fixture.External.Kind");
         assertEquals(

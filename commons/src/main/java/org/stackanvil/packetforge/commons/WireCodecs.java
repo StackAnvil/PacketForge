@@ -42,13 +42,9 @@ public final class WireCodecs {
                 });
     }
 
-    public static final PacketCodec<Unit> UNIT =
-            of(
-                    b -> Unit.INSTANCE,
-                    (b, value) -> {
-                        if (value != Unit.INSTANCE)
-                            throw new IllegalArgumentException("Expected unit value");
-                    });
+    public static final PacketCodec<Unit> UNIT = of(b -> Unit.INSTANCE, (b, value) -> {
+        if (value != Unit.INSTANCE) throw new IllegalArgumentException("Expected unit value");
+    });
 
     public static <T> PacketCodec<T> lazy(java.util.function.Supplier<PacketCodec<T>> supplier) {
         return new PacketCodec<>() {
@@ -59,8 +55,7 @@ public final class WireCodecs {
                 if (value == null)
                     synchronized (this) {
                         value = codec;
-                        if (value == null)
-                            codec = value = java.util.Objects.requireNonNull(supplier.get());
+                        if (value == null) codec = value = java.util.Objects.requireNonNull(supplier.get());
                     }
                 return value;
             }
@@ -75,23 +70,20 @@ public final class WireCodecs {
         };
     }
 
-    public static <K> PacketCodec<Variant<K>> dispatch(
-            PacketCodec<K> key, Map<K, PacketCodec<?>> cases) {
+    public static <K> PacketCodec<Variant<K>> dispatch(PacketCodec<K> key, Map<K, PacketCodec<?>> cases) {
         Map<K, PacketCodec<?>> table = Map.copyOf(cases);
         return of(
                 b -> {
                     K type = key.decode(b);
                     PacketCodec<?> codec = table.get(type);
-                    if (codec == null)
-                        throw new IllegalArgumentException("Unknown codec discriminator: " + type);
+                    if (codec == null) throw new IllegalArgumentException("Unknown codec discriminator: " + type);
                     return new Variant<>(type, codec.decode(b));
                 },
                 (b, value) -> {
                     @SuppressWarnings("unchecked")
                     PacketCodec<Object> codec = (PacketCodec<Object>) table.get(value.type());
                     if (codec == null)
-                        throw new IllegalArgumentException(
-                                "Unknown codec discriminator: " + value.type());
+                        throw new IllegalArgumentException("Unknown codec discriminator: " + value.type());
                     key.encode(b, value.type());
                     codec.encode(b, value.value());
                 });
@@ -104,8 +96,7 @@ public final class WireCodecs {
                 input -> {
                     K id = key.decode(input);
                     PacketCodec<?> codec = table.get(id);
-                    return new Variant<>(
-                            id, codec == null ? fallback.decode(input) : codec.decode(input));
+                    return new Variant<>(id, codec == null ? fallback.decode(input) : codec.decode(input));
                 },
                 (output, value) -> {
                     key.encode(output, value.type());
@@ -132,13 +123,10 @@ public final class WireCodecs {
     }
 
     public static <T> PacketCodec<T> selected(
-            java.util.function.BooleanSupplier selector,
-            PacketCodec<T> enabled,
-            PacketCodec<T> disabled) {
+            java.util.function.BooleanSupplier selector, PacketCodec<T> enabled, PacketCodec<T> disabled) {
         return of(
                 input -> (selector.getAsBoolean() ? enabled : disabled).decode(input),
-                (output, value) ->
-                        (selector.getAsBoolean() ? enabled : disabled).encode(output, value));
+                (output, value) -> (selector.getAsBoolean() ? enabled : disabled).encode(output, value));
     }
 
     public static <T> PacketCodec<T> skipDecodeFailures(PacketCodec<T> codec) {
@@ -166,44 +154,37 @@ public final class WireCodecs {
                 });
     }
 
-    public static final PacketCodec<HolderSet> HOLDER_SET =
-            of(
-                    input -> {
-                        int count = WireCodecs.VAR_INT.decode(input);
-                        if (count == 0)
-                            return new HolderSet.Tag(WireCodecs.IDENTIFIER.decode(input));
-                        if (count < 0 || count - 1 > input.readableBytes())
-                            throw new IllegalArgumentException("Invalid holder set size");
-                        List<Integer> ids = new ArrayList<>();
-                        for (int i = 1; i < count; i++) {
-                            int id = WireCodecs.VAR_INT.decode(input);
-                            if (id < 0) throw new IllegalArgumentException("Negative holder ID");
-                            ids.add(id);
-                        }
-                        return new HolderSet.Direct(ids);
-                    },
-                    (output, value) -> {
-                        if (value instanceof HolderSet.Tag tag) {
-                            WireCodecs.VAR_INT.encode(output, 0);
-                            WireCodecs.IDENTIFIER.encode(output, tag.name());
-                        } else if (value instanceof HolderSet.Direct direct) {
-                            WireCodecs.VAR_INT.encode(
-                                    output, Math.addExact(direct.ids().size(), 1));
-                            for (int id : direct.ids()) {
-                                if (id < 0)
-                                    throw new IllegalArgumentException("Negative holder ID");
-                                WireCodecs.VAR_INT.encode(output, id);
-                            }
-                        }
-                    });
+    public static final PacketCodec<HolderSet> HOLDER_SET = of(
+            input -> {
+                int count = WireCodecs.VAR_INT.decode(input);
+                if (count == 0) return new HolderSet.Tag(WireCodecs.IDENTIFIER.decode(input));
+                if (count < 0 || count - 1 > input.readableBytes())
+                    throw new IllegalArgumentException("Invalid holder set size");
+                List<Integer> ids = new ArrayList<>();
+                for (int i = 1; i < count; i++) {
+                    int id = WireCodecs.VAR_INT.decode(input);
+                    if (id < 0) throw new IllegalArgumentException("Negative holder ID");
+                    ids.add(id);
+                }
+                return new HolderSet.Direct(ids);
+            },
+            (output, value) -> {
+                if (value instanceof HolderSet.Tag tag) {
+                    WireCodecs.VAR_INT.encode(output, 0);
+                    WireCodecs.IDENTIFIER.encode(output, tag.name());
+                } else if (value instanceof HolderSet.Direct direct) {
+                    WireCodecs.VAR_INT.encode(output, Math.addExact(direct.ids().size(), 1));
+                    for (int id : direct.ids()) {
+                        if (id < 0) throw new IllegalArgumentException("Negative holder ID");
+                        WireCodecs.VAR_INT.encode(output, id);
+                    }
+                }
+            });
     public static final PacketCodec<Boolean> BOOL = of(ByteBuf::readBoolean, ByteBuf::writeBoolean);
     public static final PacketCodec<Byte> BYTE = of(ByteBuf::readByte, (b, v) -> b.writeByte(v));
-    public static final PacketCodec<Integer> UNSIGNED_BYTE =
-            of(b -> (int) b.readUnsignedByte(), ByteBuf::writeByte);
-    public static final PacketCodec<Short> SHORT =
-            of(ByteBuf::readShort, (b, v) -> b.writeShort(v));
-    public static final PacketCodec<Integer> UNSIGNED_SHORT =
-            of(ByteBuf::readUnsignedShort, ByteBuf::writeShort);
+    public static final PacketCodec<Integer> UNSIGNED_BYTE = of(b -> (int) b.readUnsignedByte(), ByteBuf::writeByte);
+    public static final PacketCodec<Short> SHORT = of(ByteBuf::readShort, (b, v) -> b.writeShort(v));
+    public static final PacketCodec<Integer> UNSIGNED_SHORT = of(ByteBuf::readUnsignedShort, ByteBuf::writeShort);
     public static final PacketCodec<Integer> INT = of(ByteBuf::readInt, ByteBuf::writeInt);
     public static final PacketCodec<Long> LONG = of(ByteBuf::readLong, ByteBuf::writeLong);
     public static final PacketCodec<Float> FLOAT = of(ByteBuf::readFloat, ByteBuf::writeFloat);
@@ -211,13 +192,10 @@ public final class WireCodecs {
     public static final PacketCodec<Integer> VAR_INT =
             of(b -> (int) readVar(b, 5), (b, v) -> writeVar(b, Integer.toUnsignedLong(v)));
     public static final PacketCodec<Long> VAR_LONG = of(b -> readVar(b, 10), WireCodecs::writeVar);
-    public static final PacketCodec<UUID> UUID_CODEC =
-            of(
-                    b -> new UUID(b.readLong(), b.readLong()),
-                    (b, v) -> {
-                        b.writeLong(v.getMostSignificantBits());
-                        b.writeLong(v.getLeastSignificantBits());
-                    });
+    public static final PacketCodec<UUID> UUID_CODEC = of(b -> new UUID(b.readLong(), b.readLong()), (b, v) -> {
+        b.writeLong(v.getMostSignificantBits());
+        b.writeLong(v.getLeastSignificantBits());
+    });
     public static final PacketCodec<String> STRING = string(32767);
     public static final PacketCodec<String> IDENTIFIER =
             of(b -> identifier(STRING.decode(b)), (b, v) -> STRING.encode(b, identifier(v)));
@@ -235,45 +213,38 @@ public final class WireCodecs {
 
     public static final PacketCodec<ChunkPosition> CHUNK_POSITION =
             of(b -> ChunkPosition.unpack(b.readLong()), (b, v) -> b.writeLong(v.packed()));
-    public static final PacketCodec<Instant> INSTANT =
-            mapped(LONG, Instant::ofEpochMilli, Instant::toEpochMilli);
-    public static final PacketCodec<OptionalInt> OPTIONAL_VAR_INT =
-            mapped(
-                    VAR_INT,
-                    v -> v == 0 ? OptionalInt.empty() : OptionalInt.of(v - 1),
-                    v -> v.isPresent() ? v.getAsInt() + 1 : 0);
-    public static final PacketCodec<long[]> LONG_ARRAY =
-            of(
-                    b -> {
-                        int count = checkedLength(VAR_INT.decode(b), b.readableBytes() / 8);
-                        long[] values = new long[count];
-                        for (int i = 0; i < count; i++) values[i] = b.readLong();
-                        return values;
-                    },
-                    (b, values) -> {
-                        VAR_INT.encode(b, values.length);
-                        for (long value : values) b.writeLong(value);
-                    });
-    public static final PacketCodec<int[]> VAR_INT_ARRAY =
-            of(
-                    b -> {
-                        int count = checkedLength(VAR_INT.decode(b), b.readableBytes());
-                        int[] values = new int[count];
-                        for (int i = 0; i < count; i++) values[i] = VAR_INT.decode(b);
-                        return values;
-                    },
-                    (b, values) -> {
-                        VAR_INT.encode(b, values.length);
-                        for (int value : values) VAR_INT.encode(b, value);
-                    });
+    public static final PacketCodec<Instant> INSTANT = mapped(LONG, Instant::ofEpochMilli, Instant::toEpochMilli);
+    public static final PacketCodec<OptionalInt> OPTIONAL_VAR_INT = mapped(
+            VAR_INT,
+            v -> v == 0 ? OptionalInt.empty() : OptionalInt.of(v - 1),
+            v -> v.isPresent() ? v.getAsInt() + 1 : 0);
+    public static final PacketCodec<long[]> LONG_ARRAY = of(
+            b -> {
+                int count = checkedLength(VAR_INT.decode(b), b.readableBytes() / 8);
+                long[] values = new long[count];
+                for (int i = 0; i < count; i++) values[i] = b.readLong();
+                return values;
+            },
+            (b, values) -> {
+                VAR_INT.encode(b, values.length);
+                for (long value : values) b.writeLong(value);
+            });
+    public static final PacketCodec<int[]> VAR_INT_ARRAY = of(
+            b -> {
+                int count = checkedLength(VAR_INT.decode(b), b.readableBytes());
+                int[] values = new int[count];
+                for (int i = 0; i < count; i++) values[i] = VAR_INT.decode(b);
+                return values;
+            },
+            (b, values) -> {
+                VAR_INT.encode(b, values.length);
+                for (int value : values) VAR_INT.encode(b, value);
+            });
     public static final PacketCodec<BitSet> BIT_SET =
             mapped(byteArray(Integer.MAX_VALUE), BitSet::valueOf, BitSet::toByteArray);
 
-    public static <A, B> PacketCodec<B> mapped(
-            PacketCodec<A> original, Function<A, B> decode, Function<B, A> encode) {
-        return of(
-                b -> decode.apply(original.decode(b)),
-                (b, value) -> original.encode(b, encode.apply(value)));
+    public static <A, B> PacketCodec<B> mapped(PacketCodec<A> original, Function<A, B> decode, Function<B, A> encode) {
+        return of(b -> decode.apply(original.decode(b)), (b, value) -> original.encode(b, encode.apply(value)));
     }
 
     public static <T> PacketCodec<Optional<T>> sentinelOptional(
@@ -296,8 +267,7 @@ public final class WireCodecs {
                         payload.encode(scratch, value.get());
                         int start = scratch.readerIndex();
                         if (prefix.decode(scratch) == absent)
-                            throw new IllegalArgumentException(
-                                    "Present payload uses the absence marker");
+                            throw new IllegalArgumentException("Present payload uses the absence marker");
                         scratch.readerIndex(start);
                         output.writeBytes(scratch);
                     } finally {
@@ -310,8 +280,7 @@ public final class WireCodecs {
         if (maxBytes < 0) throw new IllegalArgumentException("Negative payload limit");
         return of(
                 b -> {
-                    int count =
-                            checkedLength(VAR_INT.decode(b), Math.min(maxBytes, b.readableBytes()));
+                    int count = checkedLength(VAR_INT.decode(b), Math.min(maxBytes, b.readableBytes()));
                     return original.decode(b.readSlice(count));
                 },
                 (b, value) -> {
@@ -328,17 +297,12 @@ public final class WireCodecs {
     }
 
     public static PacketCodec<BitSet> fixedBitSet(int bits) {
-        if (bits < 0 || bits > Integer.MAX_VALUE - 7)
-            throw new IllegalArgumentException("Invalid bit count");
+        if (bits < 0 || bits > Integer.MAX_VALUE - 7) throw new IllegalArgumentException("Invalid bit count");
         int bytes = (bits + 7) / 8;
-        return mapped(
-                fixedBytes(bytes),
-                BitSet::valueOf,
-                value -> {
-                    if (value.length() > bits)
-                        throw new IllegalArgumentException("Bit set exceeds fixed width");
-                    return java.util.Arrays.copyOf(value.toByteArray(), bytes);
-                });
+        return mapped(fixedBytes(bytes), BitSet::valueOf, value -> {
+            if (value.length() > bits) throw new IllegalArgumentException("Bit set exceeds fixed width");
+            return java.util.Arrays.copyOf(value.toByteArray(), bytes);
+        });
     }
 
     public static <T> PacketCodec<List<T>> fixedList(PacketCodec<T> element, int size) {
@@ -350,8 +314,7 @@ public final class WireCodecs {
                     return List.copyOf(values);
                 },
                 (b, values) -> {
-                    if (values.size() != size)
-                        throw new IllegalArgumentException("Expected " + size + " values");
+                    if (values.size() != size) throw new IllegalArgumentException("Expected " + size + " values");
                     for (T value : values) element.encode(b, value);
                 });
     }
@@ -363,8 +326,7 @@ public final class WireCodecs {
                 ArrayList::new);
     }
 
-    public static <K, V> PacketCodec<Map<K, V>> map(
-            PacketCodec<K> key, PacketCodec<V> value, int maxSize) {
+    public static <K, V> PacketCodec<Map<K, V>> map(PacketCodec<K> key, PacketCodec<V> value, int maxSize) {
         return of(
                 b -> {
                     int count = checkedLength(VAR_INT.decode(b), maxSize);
@@ -375,11 +337,10 @@ public final class WireCodecs {
                 (b, values) -> {
                     checkedLength(values.size(), maxSize);
                     VAR_INT.encode(b, values.size());
-                    values.forEach(
-                            (k, v) -> {
-                                key.encode(b, k);
-                                value.encode(b, v);
-                            });
+                    values.forEach((k, v) -> {
+                        key.encode(b, k);
+                        value.encode(b, v);
+                    });
                 });
     }
 
@@ -394,8 +355,7 @@ public final class WireCodecs {
                 },
                 (b, value) -> {
                     switch (value) {
-                        case RegistryValue.Reference<T> reference ->
-                                VAR_INT.encode(b, reference.id() + 1);
+                        case RegistryValue.Reference<T> reference -> VAR_INT.encode(b, reference.id() + 1);
                         case RegistryValue.Direct<T> inline -> {
                             VAR_INT.encode(b, 0);
                             direct.encode(b, inline.value());
@@ -404,22 +364,19 @@ public final class WireCodecs {
                 });
     }
 
-    public static <L, R> PacketCodec<Either<L, R>> either(
-            PacketCodec<L> left, PacketCodec<R> right) {
-        return of(
-                b -> b.readBoolean() ? Either.left(left.decode(b)) : Either.right(right.decode(b)),
-                (b, value) -> {
-                    switch (value) {
-                        case Either.Left<L, R> branch -> {
-                            b.writeBoolean(true);
-                            left.encode(b, branch.value());
-                        }
-                        case Either.Right<L, R> branch -> {
-                            b.writeBoolean(false);
-                            right.encode(b, branch.value());
-                        }
-                    }
-                });
+    public static <L, R> PacketCodec<Either<L, R>> either(PacketCodec<L> left, PacketCodec<R> right) {
+        return of(b -> b.readBoolean() ? Either.left(left.decode(b)) : Either.right(right.decode(b)), (b, value) -> {
+            switch (value) {
+                case Either.Left<L, R> branch -> {
+                    b.writeBoolean(true);
+                    left.encode(b, branch.value());
+                }
+                case Either.Right<L, R> branch -> {
+                    b.writeBoolean(false);
+                    right.encode(b, branch.value());
+                }
+            }
+        });
     }
 
     private static long readVar(ByteBuf b, int limit) {
@@ -451,16 +408,13 @@ public final class WireCodecs {
                     byte[] data = new byte[size];
                     b.readBytes(data);
                     String value = new String(data, StandardCharsets.UTF_8);
-                    if (value.length() > maxChars)
-                        throw new WireDecodeException("String exceeds character limit");
+                    if (value.length() > maxChars) throw new WireDecodeException("String exceeds character limit");
                     return value;
                 },
                 (b, value) -> {
-                    if (value.length() > maxChars)
-                        throw new IllegalArgumentException("String exceeds character limit");
+                    if (value.length() > maxChars) throw new IllegalArgumentException("String exceeds character limit");
                     byte[] data = value.getBytes(StandardCharsets.UTF_8);
-                    if (data.length > maxChars * 3)
-                        throw new IllegalArgumentException("String exceeds byte limit");
+                    if (data.length > maxChars * 3) throw new IllegalArgumentException("String exceeds byte limit");
                     VAR_INT.encode(b, data.length);
                     b.writeBytes(data);
                 });
@@ -476,8 +430,7 @@ public final class WireCodecs {
                     return value;
                 },
                 (b, value) -> {
-                    if (value.length != size)
-                        throw new IllegalArgumentException("Wrong byte array size");
+                    if (value.length != size) throw new IllegalArgumentException("Wrong byte array size");
                     b.writeBytes(value);
                 });
     }
@@ -490,9 +443,7 @@ public final class WireCodecs {
         if (maxLength < 0) throw new IllegalArgumentException("Negative array limit");
         return of(
                 b -> {
-                    int size =
-                            checkedLength(
-                                    VAR_INT.decode(b), Math.min(maxLength, b.readableBytes()));
+                    int size = checkedLength(VAR_INT.decode(b), Math.min(maxLength, b.readableBytes()));
                     byte[] data = new byte[size];
                     b.readBytes(data);
                     return data;
@@ -505,21 +456,17 @@ public final class WireCodecs {
     }
 
     public static <T> PacketCodec<Optional<T>> optional(PacketCodec<T> codec) {
-        return of(
-                b -> b.readBoolean() ? Optional.of(codec.decode(b)) : Optional.empty(),
-                (b, v) -> {
-                    b.writeBoolean(v.isPresent());
-                    v.ifPresent(x -> codec.encode(b, x));
-                });
+        return of(b -> b.readBoolean() ? Optional.of(codec.decode(b)) : Optional.empty(), (b, v) -> {
+            b.writeBoolean(v.isPresent());
+            v.ifPresent(x -> codec.encode(b, x));
+        });
     }
 
     public static <T> PacketCodec<T> nullable(PacketCodec<T> codec) {
-        return of(
-                b -> b.readBoolean() ? codec.decode(b) : null,
-                (b, v) -> {
-                    b.writeBoolean(v != null);
-                    if (v != null) codec.encode(b, v);
-                });
+        return of(b -> b.readBoolean() ? codec.decode(b) : null, (b, v) -> {
+            b.writeBoolean(v != null);
+            if (v != null) codec.encode(b, v);
+        });
     }
 
     public static <T> PacketCodec<List<T>> list(PacketCodec<T> codec, int maxLength) {
@@ -555,33 +502,26 @@ public final class WireCodecs {
         CLAMP
     }
 
-    public static <E extends Enum<E>> PacketCodec<E> enumIds(
-            E[] values, int[] ids, PacketCodec<Integer> wire) {
+    public static <E extends Enum<E>> PacketCodec<E> enumIds(E[] values, int[] ids, PacketCodec<Integer> wire) {
         return enumIds(values, ids, wire, EnumFallback.STRICT);
     }
 
     public static <E extends Enum<E>> PacketCodec<E> enumIds(
             E[] values, int[] ids, PacketCodec<Integer> wire, EnumFallback fallback) {
-        if (values.length != ids.length)
-            throw new IllegalArgumentException("Enum ID count differs");
+        if (values.length != ids.length) throw new IllegalArgumentException("Enum ID count differs");
         E[] constants = values.clone();
         int[] encoded = ids.clone();
         return of(
                 b -> {
                     int id = wire.decode(b);
-                    for (int i = 0; i < encoded.length; i++)
-                        if (encoded[i] == id) return constants[i];
-                    int normalized =
-                            switch (fallback) {
-                                case STRICT ->
-                                        throw new IllegalArgumentException(
-                                                "Unknown enum ID: " + id);
-                                case ZERO -> 0;
-                                case WRAP -> Math.floorMod(id, encoded.length);
-                                case CLAMP -> Math.clamp(id, 0, encoded.length - 1);
-                            };
-                    for (int i = 0; i < encoded.length; i++)
-                        if (encoded[i] == normalized) return constants[i];
+                    for (int i = 0; i < encoded.length; i++) if (encoded[i] == id) return constants[i];
+                    int normalized = switch (fallback) {
+                        case STRICT -> throw new IllegalArgumentException("Unknown enum ID: " + id);
+                        case ZERO -> 0;
+                        case WRAP -> Math.floorMod(id, encoded.length);
+                        case CLAMP -> Math.clamp(id, 0, encoded.length - 1);
+                    };
+                    for (int i = 0; i < encoded.length; i++) if (encoded[i] == normalized) return constants[i];
                     throw new IllegalArgumentException("Enum fallback requires continuous IDs");
                 },
                 (b, v) -> wire.encode(b, encoded[v.ordinal()]));
@@ -589,14 +529,12 @@ public final class WireCodecs {
 
     public static <E extends Enum<E>> PacketCodec<E> enumNames(
             E[] values, String[] names, PacketCodec<String> wire, E fallback) {
-        if (values.length != names.length)
-            throw new IllegalArgumentException("Enum name count differs");
+        if (values.length != names.length) throw new IllegalArgumentException("Enum name count differs");
         E[] constants = values.clone();
         String[] encoded = names.clone();
         var decoded = new LinkedHashMap<String, E>();
         for (int i = 0; i < constants.length; i++)
-            if (decoded.put(encoded[i], constants[i]) != null)
-                throw new IllegalArgumentException("Repeated enum name");
+            if (decoded.put(encoded[i], constants[i]) != null) throw new IllegalArgumentException("Repeated enum name");
         return of(
                 input -> decoded.getOrDefault(wire.decode(input), fallback),
                 (output, value) -> wire.encode(output, encoded[value.ordinal()]));
@@ -604,15 +542,13 @@ public final class WireCodecs {
 
     public static <E extends Enum<E>> PacketCodec<E> enumIdsOrDefault(
             E[] values, int[] ids, PacketCodec<Integer> wire, E fallback) {
-        if (values.length != ids.length)
-            throw new IllegalArgumentException("Enum ID count differs");
+        if (values.length != ids.length) throw new IllegalArgumentException("Enum ID count differs");
         E[] constants = values.clone();
         int[] encoded = ids.clone();
         return of(
                 input -> {
                     int id = wire.decode(input);
-                    for (int i = 0; i < encoded.length; i++)
-                        if (encoded[i] == id) return constants[i];
+                    for (int i = 0; i < encoded.length; i++) if (encoded[i] == id) return constants[i];
                     return fallback;
                 },
                 (output, value) -> wire.encode(output, encoded[value.ordinal()]));

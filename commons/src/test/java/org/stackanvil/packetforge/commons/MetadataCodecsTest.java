@@ -8,17 +8,13 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class MetadataCodecsTest {
-    private static final PacketCodec<List<MetadataEntry>> CODEC =
-            MetadataCodecs.entries(
-                    WireCodecs.dispatch(
-                            WireCodecs.VAR_INT, Map.of(0, WireCodecs.BYTE, 1, WireCodecs.STRING)));
+    private static final PacketCodec<List<MetadataEntry>> CODEC = MetadataCodecs.entries(
+            WireCodecs.dispatch(WireCodecs.VAR_INT, Map.of(0, WireCodecs.BYTE, 1, WireCodecs.STRING)));
 
     @Test
     void sentinelOnlyTerminatesTheIndexAndPreservesFollowingBytes() {
-        var values =
-                List.of(
-                        new MetadataEntry(254, new Variant<>(0, (byte) -1)),
-                        new MetadataEntry(0, new Variant<>(1, "x")));
+        var values = List.of(
+                new MetadataEntry(254, new Variant<>(0, (byte) -1)), new MetadataEntry(0, new Variant<>(1, "x")));
         var buffer = Unpooled.buffer();
         try {
             CODEC.encode(buffer, values);
@@ -37,11 +33,7 @@ class MetadataCodecsTest {
 
     @Test
     void rejectsMissingSentinelsUnknownSerializersAndDuplicateIndices() {
-        for (byte[] bytes :
-                List.of(
-                        new byte[] {0, 0, 1},
-                        new byte[] {0, 2, -1},
-                        new byte[] {0, 0, 1, 0, 0, 2, -1})) {
+        for (byte[] bytes : List.of(new byte[] {0, 0, 1}, new byte[] {0, 2, -1}, new byte[] {0, 0, 1, 0, 0, 2, -1})) {
             var input = Unpooled.wrappedBuffer(bytes);
             try {
                 assertThrows(RuntimeException.class, () -> CODEC.decode(input));
@@ -49,8 +41,6 @@ class MetadataCodecsTest {
                 input.release();
             }
         }
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> new MetadataEntry(255, new Variant<>(0, (byte) 0)));
+        assertThrows(IllegalArgumentException.class, () -> new MetadataEntry(255, new Variant<>(0, (byte) 0)));
     }
 }

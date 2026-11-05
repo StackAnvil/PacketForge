@@ -15,14 +15,11 @@ class PacketRegistryTest {
         }
 
         static final PacketCodec<NumberPacket> CODEC =
-                WireCodecs.of(
-                        b -> new NumberPacket(WireCodecs.VAR_INT.decode(b)),
-                        (b, p) -> p.serialize(b));
+                WireCodecs.of(b -> new NumberPacket(WireCodecs.VAR_INT.decode(b)), (b, p) -> p.serialize(b));
     }
 
     final Key key = new Key(State.PLAY, Flow.CLIENTBOUND, 17);
-    final Entry<NumberPacket> entry =
-            new Entry<>(key, "test:number", NumberPacket.class, NumberPacket.CODEC);
+    final Entry<NumberPacket> entry = new Entry<>(key, "test:number", NumberPacket.class, NumberPacket.CODEC);
     final PacketRegistry registry = new PacketRegistry(List.of(entry));
 
     @Test
@@ -34,9 +31,7 @@ class PacketRegistryTest {
             assertFalse(b.isReadable());
             b.clear();
             registry.encode(key, new NumberPacket(1), b);
-            assertThrows(
-                    IllegalArgumentException.class,
-                    () -> registry.decode(State.PLAY, Flow.SERVERBOUND, b));
+            assertThrows(IllegalArgumentException.class, () -> registry.decode(State.PLAY, Flow.SERVERBOUND, b));
             assertEquals(0, b.readerIndex());
         } finally {
             b.release();
@@ -48,14 +43,10 @@ class PacketRegistryTest {
         ByteBuf b = Unpooled.buffer();
         try {
             b.writeByte(17).writeByte(1).writeByte(99);
-            assertThrows(
-                    IllegalArgumentException.class,
-                    () -> registry.decode(State.PLAY, Flow.CLIENTBOUND, b));
+            assertThrows(IllegalArgumentException.class, () -> registry.decode(State.PLAY, Flow.CLIENTBOUND, b));
             assertEquals(0, b.readerIndex());
             b.clear().writeByte(17).writeByte(128);
-            assertThrows(
-                    IndexOutOfBoundsException.class,
-                    () -> registry.decode(State.PLAY, Flow.CLIENTBOUND, b));
+            assertThrows(IndexOutOfBoundsException.class, () -> registry.decode(State.PLAY, Flow.CLIENTBOUND, b));
             assertEquals(0, b.readerIndex());
         } finally {
             b.release();
@@ -64,7 +55,6 @@ class PacketRegistryTest {
 
     @Test
     void rejectsDuplicateIds() {
-        assertThrows(
-                IllegalArgumentException.class, () -> new PacketRegistry(List.of(entry, entry)));
+        assertThrows(IllegalArgumentException.class, () -> new PacketRegistry(List.of(entry, entry)));
     }
 }

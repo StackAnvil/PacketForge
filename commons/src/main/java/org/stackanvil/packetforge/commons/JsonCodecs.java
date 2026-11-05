@@ -11,7 +11,6 @@ public final class JsonCodecs {
     private JsonCodecs() {}
 
     public static PacketCodec<JsonElement> json(int maxChars) {
-        return WireCodecs.mapped(
-                WireCodecs.string(maxChars), JsonParser::parseString, GSON::toJson);
+        return WireCodecs.mapped(WireCodecs.string(maxChars), JsonParser::parseString, GSON::toJson);
     }
 }

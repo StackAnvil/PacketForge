@@ -7,43 +7,32 @@ public final class VectorCodecs {
     private VectorCodecs() {}
 
     public static final PacketCodec<IntVector3> INT =
-            WireCodecs.of(
-                    b -> new IntVector3(b.readInt(), b.readInt(), b.readInt()),
-                    (b, v) -> {
-                        b.writeInt(v.x());
-                        b.writeInt(v.y());
-                        b.writeInt(v.z());
-                    });
+            WireCodecs.of(b -> new IntVector3(b.readInt(), b.readInt(), b.readInt()), (b, v) -> {
+                b.writeInt(v.x());
+                b.writeInt(v.y());
+                b.writeInt(v.z());
+            });
     public static final PacketCodec<Vector3> DOUBLE =
-            WireCodecs.of(
-                    b -> new Vector3(b.readDouble(), b.readDouble(), b.readDouble()),
-                    (b, v) -> {
-                        b.writeDouble(v.x());
-                        b.writeDouble(v.y());
-                        b.writeDouble(v.z());
-                    });
+            WireCodecs.of(b -> new Vector3(b.readDouble(), b.readDouble(), b.readDouble()), (b, v) -> {
+                b.writeDouble(v.x());
+                b.writeDouble(v.y());
+                b.writeDouble(v.z());
+            });
     public static final PacketCodec<FloatVector3> FLOAT =
-            WireCodecs.of(
-                    b -> new FloatVector3(b.readFloat(), b.readFloat(), b.readFloat()),
-                    (b, v) -> {
-                        b.writeFloat(v.x());
-                        b.writeFloat(v.y());
-                        b.writeFloat(v.z());
-                    });
+            WireCodecs.of(b -> new FloatVector3(b.readFloat(), b.readFloat(), b.readFloat()), (b, v) -> {
+                b.writeFloat(v.x());
+                b.writeFloat(v.y());
+                b.writeFloat(v.z());
+            });
     public static final PacketCodec<Quaternion> QUATERNION =
-            WireCodecs.of(
-                    b -> new Quaternion(b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat()),
-                    (b, v) -> {
-                        b.writeFloat(v.x());
-                        b.writeFloat(v.y());
-                        b.writeFloat(v.z());
-                        b.writeFloat(v.w());
-                    });
+            WireCodecs.of(b -> new Quaternion(b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat()), (b, v) -> {
+                b.writeFloat(v.x());
+                b.writeFloat(v.y());
+                b.writeFloat(v.z());
+                b.writeFloat(v.w());
+            });
     public static final PacketCodec<Float> ROTATION_BYTE =
-            WireCodecs.mapped(
-                    WireCodecs.BYTE,
-                    v -> v * 360 / 256.0f,
-                    v -> (byte) Math.floor(v * 256.0f / 360.0f));
+            WireCodecs.mapped(WireCodecs.BYTE, v -> v * 360 / 256.0f, v -> (byte) Math.floor(v * 256.0f / 360.0f));
     public static final PacketCodec<Vector3> LOW_PRECISION =
             WireCodecs.of(VectorCodecs::readScaled, VectorCodecs::writeScaled);
 
@@ -55,8 +44,7 @@ public final class VectorCodecs {
         long bits = high << 16 | middle << 8 | low;
         long scale = low & 3;
         if ((low & 4) != 0) scale |= Integer.toUnsignedLong(WireCodecs.VAR_INT.decode(input)) << 2;
-        return new Vector3(
-                unpack(bits >> 3) * scale, unpack(bits >> 18) * scale, unpack(bits >> 33) * scale);
+        return new Vector3(unpack(bits >> 3) * scale, unpack(bits >> 18) * scale, unpack(bits >> 33) * scale);
     }
 
     private static void writeScaled(ByteBuf output, Vector3 value) {

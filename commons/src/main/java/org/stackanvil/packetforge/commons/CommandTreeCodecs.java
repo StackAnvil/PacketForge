@@ -20,14 +20,10 @@ public final class CommandTreeCodecs {
                         var codec = codecs.get(id);
                         if (codec != null) {
                             Object value = codec.decode(input);
-                            String suggestion =
-                                    (flags & 16) != 0 ? WireCodecs.IDENTIFIER.decode(input) : null;
-                            stub =
-                                    new CommandNode.Argument(
-                                            name, new Variant<>(id, value), suggestion);
+                            String suggestion = (flags & 16) != 0 ? WireCodecs.IDENTIFIER.decode(input) : null;
+                            stub = new CommandNode.Argument(name, new Variant<>(id, value), suggestion);
                         }
-                    } else if ((flags & 3) == 1)
-                        stub = new CommandNode.Literal(WireCodecs.STRING.decode(input));
+                    } else if ((flags & 3) == 1) stub = new CommandNode.Literal(WireCodecs.STRING.decode(input));
                     return new CommandNode(flags, children, redirect, stub);
                 },
                 (output, node) -> {
@@ -40,12 +36,10 @@ public final class CommandTreeCodecs {
                         WireCodecs.STRING.encode(output, argument.name());
                         int id = argument.argument().type();
                         var codec = codecs.get(id);
-                        if (codec == null)
-                            throw new IllegalArgumentException("Unknown command argument ID " + id);
+                        if (codec == null) throw new IllegalArgumentException("Unknown command argument ID " + id);
                         WireCodecs.VAR_INT.encode(output, id);
                         write(codec, output, argument.argument().value());
-                        if (argument.suggestion() != null)
-                            WireCodecs.IDENTIFIER.encode(output, argument.suggestion());
+                        if (argument.suggestion() != null) WireCodecs.IDENTIFIER.encode(output, argument.suggestion());
                     }
                 });
     }
@@ -68,9 +62,7 @@ public final class CommandTreeCodecs {
         for (int i = 0; i < size; i++) {
             var node = nodes.get(i);
             int[] references =
-                    redirects
-                            ? (node.flags() & 8) != 0 ? new int[] {node.redirect()} : new int[0]
-                            : node.children();
+                    redirects ? (node.flags() & 8) != 0 ? new int[] {node.redirect()} : new int[0] : node.children();
             for (int reference : references)
                 if (reference >= 0 && reference < size) {
                     pending[i]++;
@@ -83,10 +75,8 @@ public final class CommandTreeCodecs {
         while (!ready.isEmpty()) {
             int index = ready.removeFirst();
             resolved++;
-            for (int dependent : dependents.get(index))
-                if (--pending[dependent] == 0) ready.add(dependent);
+            for (int dependent : dependents.get(index)) if (--pending[dependent] == 0) ready.add(dependent);
         }
-        if (resolved != size)
-            throw new IllegalStateException("Server sent an impossible command tree");
+        if (resolved != size) throw new IllegalStateException("Server sent an impossible command tree");
     }
 }

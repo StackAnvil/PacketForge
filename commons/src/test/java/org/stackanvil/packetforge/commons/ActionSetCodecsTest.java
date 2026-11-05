@@ -45,21 +45,13 @@ class ActionSetCodecsTest {
             input.release();
             output.release();
         }
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> ActionSetCodecs.mask(new Action[] {Action.B, Action.A}));
+        assertThrows(IllegalArgumentException.class, () -> ActionSetCodecs.mask(new Action[] {Action.B, Action.A}));
     }
 
     @Test
     void entriesFollowOrdinalOrderRegardlessOfMapOrderAndIgnoreUnselectedValues() {
-        var schemas =
-                Map.<Action, PacketCodec<?>>of(
-                        Action.A,
-                        WireCodecs.VAR_INT,
-                        Action.B,
-                        WireCodecs.BOOL,
-                        Action.C,
-                        WireCodecs.STRING);
+        var schemas = Map.<Action, PacketCodec<?>>of(
+                Action.A, WireCodecs.VAR_INT, Action.B, WireCodecs.BOOL, Action.C, WireCodecs.STRING);
         UUID id = new UUID(Long.MIN_VALUE, Long.MAX_VALUE);
         var entry = new ActionEntry<>(id, Map.of(Action.C, "café", Action.A, 128, Action.B, true));
         var codec = ActionSetCodecs.entry(Set.of(Action.C, Action.A), schemas);
@@ -72,9 +64,7 @@ class ActionSetCodecsTest {
             assertFalse(bytes.isReadable());
             bytes.clear();
             codec.encode(bytes, entry);
-            assertEquals(
-                    new ActionEntry<>(id, Map.of(Action.A, 128, Action.C, "café")),
-                    codec.decode(bytes));
+            assertEquals(new ActionEntry<>(id, Map.of(Action.A, 128, Action.C, "café")), codec.decode(bytes));
             assertFalse(bytes.isReadable());
             bytes.clear();
             assertThrows(
@@ -88,8 +78,6 @@ class ActionSetCodecsTest {
         }
         assertThrows(
                 IllegalArgumentException.class,
-                () ->
-                        ActionSetCodecs.entry(
-                                Set.of(Action.B), Map.of(Action.A, WireCodecs.VAR_INT)));
+                () -> ActionSetCodecs.entry(Set.of(Action.B), Map.of(Action.A, WireCodecs.VAR_INT)));
     }
 }

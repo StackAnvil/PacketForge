@@ -12,8 +12,7 @@ public record ComponentPatch(Map<Integer, Object> added, Set<Integer> removed) {
         removed = Set.copyOf(removed);
         if (added.keySet().stream().anyMatch(removed::contains))
             throw new IllegalArgumentException("Component is both added and removed");
-        if (added.keySet().stream().anyMatch(id -> id < 0)
-                || removed.stream().anyMatch(id -> id < 0))
+        if (added.keySet().stream().anyMatch(id -> id < 0) || removed.stream().anyMatch(id -> id < 0))
             throw new IllegalArgumentException("Negative component ID");
     }
 }

@@ -10,9 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class ActionSetAnalyzerTest {
-    @TempDir Path temporary;
-    private static final String SOURCE =
-            """
+    @TempDir
+    Path temporary;
+
+    private static final String SOURCE = """
         package net.minecraft.fixture;
         class Batch {
             EnumSet<Batch.Action> actions;
@@ -81,19 +82,14 @@ class ActionSetAnalyzerTest {
 
     @Test
     void rejectsUnmatchedActionsWireWidthsAndBuilderTransforms() {
-        for (String source :
-                List.of(
-                        SOURCE.replace("LISTED(1,", "LISTED(3,"),
-                        SOURCE.replace(
-                                "output.writeVarInt(entry.number())",
-                                "output.writeInt(entry.number())"),
-                        SOURCE.replace(
-                                "this.profileId, this.number, this.listed",
-                                "this.profileId, this.number + 1, this.listed"),
-                        SOURCE.replace("this.reader = reader", "this.reader = decorate(reader)"),
-                        SOURCE.replace("action : actions", "action : actions.reversed()"),
-                        SOURCE.replace(
-                                "this.actions, Batch.Action.class", "this.actions, Other.class"))) {
+        for (String source : List.of(
+                SOURCE.replace("LISTED(1,", "LISTED(3,"),
+                SOURCE.replace("output.writeVarInt(entry.number())", "output.writeInt(entry.number())"),
+                SOURCE.replace(
+                        "this.profileId, this.number, this.listed", "this.profileId, this.number + 1, this.listed"),
+                SOURCE.replace("this.reader = reader", "this.reader = decorate(reader)"),
+                SOURCE.replace("action : actions", "action : actions.reversed()"),
+                SOURCE.replace("this.actions, Batch.Action.class", "this.actions, Other.class"))) {
             assertThrows(SourceIndex.Unsupported.class, () -> analyze(source));
         }
     }

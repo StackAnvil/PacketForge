@@ -31,9 +31,7 @@ class DependentLayoutsTest {
             WireCodecs.VAR_INT.encode(buffer, 123);
             buffer.writeByte(128);
             buffer.writeByte(0);
-            assertThrows(
-                    IndexOutOfBoundsException.class,
-                    () -> ClientboundSetEquipmentPacket.CODEC.decode(buffer));
+            assertThrows(IndexOutOfBoundsException.class, () -> ClientboundSetEquipmentPacket.CODEC.decode(buffer));
         } finally {
             buffer.release();
         }

@@ -10,12 +10,10 @@ class SentinelOptionalTest {
     record Payload(int width, String value) {}
 
     private static final PacketCodec<Payload> PAYLOAD =
-            WireCodecs.of(
-                    b -> new Payload(b.readUnsignedByte(), WireCodecs.STRING.decode(b)),
-                    (b, v) -> {
-                        b.writeByte(v.width());
-                        WireCodecs.STRING.encode(b, v.value());
-                    });
+            WireCodecs.of(b -> new Payload(b.readUnsignedByte(), WireCodecs.STRING.decode(b)), (b, v) -> {
+                b.writeByte(v.width());
+                WireCodecs.STRING.encode(b, v.value());
+            });
     private static final PacketCodec<Optional<Payload>> CODEC =
             WireCodecs.sentinelOptional(PAYLOAD, WireCodecs.UNSIGNED_BYTE, 0);
 
@@ -41,9 +39,7 @@ class SentinelOptionalTest {
     void rejectsPresentPayloadsThatUseTheAbsenceMarker() {
         var buffer = Unpooled.buffer();
         try {
-            assertThrows(
-                    IllegalArgumentException.class,
-                    () -> CODEC.encode(buffer, Optional.of(new Payload(0, "x"))));
+            assertThrows(IllegalArgumentException.class, () -> CODEC.encode(buffer, Optional.of(new Payload(0, "x"))));
             assertEquals(0, buffer.writerIndex());
         } finally {
             buffer.release();

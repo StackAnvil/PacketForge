@@ -16,8 +16,7 @@ class CollectionCodecsTest {
         roundTrip(WireCodecs.map(WireCodecs.STRING, WireCodecs.INT, 2), Map.of("a", -1, "b", 128));
         roundTrip(WireCodecs.set(WireCodecs.STRING, 2), Set.of("a", "b"));
         roundTrip(WireCodecs.fixedList(WireCodecs.INT, 2), List.of(1, -1));
-        roundTrip(
-                WireCodecs.CHUNK_POSITION, new ChunkPosition(Integer.MIN_VALUE, Integer.MAX_VALUE));
+        roundTrip(WireCodecs.CHUNK_POSITION, new ChunkPosition(Integer.MIN_VALUE, Integer.MAX_VALUE));
     }
 
     @Test
@@ -29,9 +28,7 @@ class CollectionCodecsTest {
                     () -> WireCodecs.fixedList(WireCodecs.INT, 2).encode(buffer, List.of(1)));
             assertThrows(
                     IllegalArgumentException.class,
-                    () ->
-                            WireCodecs.map(WireCodecs.STRING, WireCodecs.INT, 0)
-                                    .encode(buffer, Map.of("a", 1)));
+                    () -> WireCodecs.map(WireCodecs.STRING, WireCodecs.INT, 0).encode(buffer, Map.of("a", 1)));
             buffer.writeByte(3);
             assertThrows(
                     IllegalArgumentException.class,
@@ -47,15 +44,10 @@ class CollectionCodecsTest {
             var buffer = Unpooled.buffer();
             try {
                 WireCodecs.VAR_INT.encode(buffer, -1);
-                var codec =
-                        WireCodecs.enumIds(
-                                Example.values(), new int[] {1, 2, 0}, WireCodecs.VAR_INT, policy);
+                var codec = WireCodecs.enumIds(Example.values(), new int[] {1, 2, 0}, WireCodecs.VAR_INT, policy);
                 if (policy == WireCodecs.EnumFallback.STRICT)
                     assertThrows(IllegalArgumentException.class, () -> codec.decode(buffer));
-                else
-                    assertEquals(
-                            policy == WireCodecs.EnumFallback.WRAP ? Example.B : Example.C,
-                            codec.decode(buffer));
+                else assertEquals(policy == WireCodecs.EnumFallback.WRAP ? Example.B : Example.C, codec.decode(buffer));
             } finally {
                 buffer.release();
             }

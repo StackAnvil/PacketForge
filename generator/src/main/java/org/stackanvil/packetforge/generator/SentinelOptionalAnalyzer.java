@@ -24,16 +24,14 @@ final class SentinelOptionalAnalyzer {
             throw new Unsupported("Not an optional-record codec");
         var readers = source.declaration().getMethodsByName(readerRef.getIdentifier());
         var writers = source.declaration().getMethodsByName(writerRef.getIdentifier());
-        if (readers.size() != 1 || writers.size() != 1)
-            throw new Unsupported("Ambiguous optional-record methods");
+        if (readers.size() != 1 || writers.size() != 1) throw new Unsupported("Ambiguous optional-record methods");
         var reader = readers.getFirst();
         var writer = writers.getFirst();
         if (!reader.getTypeAsString().startsWith("Optional<")
                 || reader.getParameters().size() != 1
                 || writer.getParameters().size() != 2
                 || reader.getBody().isEmpty()
-                || writer.getBody().isEmpty())
-            throw new Unsupported("Not an optional-record reader and writer");
+                || writer.getBody().isEmpty()) throw new Unsupported("Not an optional-record reader and writer");
         String input = reader.getParameter(0).getNameAsString(),
                 output = writer.getParameter(0).getNameAsString(),
                 optional = writer.getParameter(1).getNameAsString();
@@ -45,22 +43,15 @@ final class SentinelOptionalAnalyzer {
                 || !(body.getStatement(1) instanceof IfStmt branch))
             throw new Unsupported("Optional-record reader has extra operations");
         var discriminator = variables.getVariable(0);
-        if (!discriminator
-                        .getInitializer()
-                        .map(Object::toString)
-                        .orElse("")
-                        .equals(input + ".readUnsignedByte()")
-                || !branch.getCondition()
-                        .toString()
-                        .equals(discriminator.getNameAsString() + " > 0")
+        if (!discriminator.getInitializer().map(Object::toString).orElse("").equals(input + ".readUnsignedByte()")
+                || !branch.getCondition().toString().equals(discriminator.getNameAsString() + " > 0")
                 || !branch.getThenStmt().isBlockStmt()
                 || branch.getElseStmt().isEmpty()
                 || !returnsEmpty(branch.getElseStmt().get()))
             throw new Unsupported("Optional-record reader has an unsupported sentinel");
         var present = branch.getThenStmt().asBlockStmt();
         if (present.getStatements().isEmpty()
-                || !(present.getStatement(present.getStatements().size() - 1)
-                        instanceof ReturnStmt returned)
+                || !(present.getStatement(present.getStatements().size() - 1) instanceof ReturnStmt returned)
                 || !(returned.getExpression().orElse(null) instanceof MethodCallExpr of)
                 || !of.getScope().map(Object::toString).orElse("").equals("Optional")
                 || !of.getNameAsString().equals("of")
@@ -88,8 +79,7 @@ final class SentinelOptionalAnalyzer {
                                     name.getNameAsString(),
                                     record.getParameter(i).getNameAsString())
                             != null)
-                throw new Unsupported(
-                        "Optional-record constructor transforms or repeats a wire field");
+                throw new Unsupported("Optional-record constructor transforms or repeats a wire field");
         }
         var writeBody = writer.getBody().get();
         if (writeBody.getStatements().size() != 1
@@ -99,8 +89,7 @@ final class SentinelOptionalAnalyzer {
                 || writeBranch.getElseStmt().isEmpty())
             throw new Unsupported("Optional-record writer has extra operations");
         Statement absent = writeBranch.getElseStmt().get();
-        if (absent instanceof BlockStmt block && block.getStatements().size() == 1)
-            absent = block.getStatement(0);
+        if (absent instanceof BlockStmt block && block.getStatements().size() == 1) absent = block.getStatement(0);
         if (!absent.toString().equals(output + ".writeByte(0);"))
             throw new Unsupported("Optional-record writer uses a different sentinel");
         var encoded = writeBranch.getThenStmt().asBlockStmt();
@@ -119,8 +108,7 @@ final class SentinelOptionalAnalyzer {
         for (int i = 0; i < decoded.size(); i++) {
             var variable = decoded.get(i);
             String fieldName = fieldByVariable.get(variable.getNameAsString());
-            if (fieldName == null)
-                throw new Unsupported("Optional-record reader discards a wire field");
+            if (fieldName == null) throw new Unsupported("Optional-record reader discards a wire field");
             Expression read = staticBuffer(variable.getInitializer().orElseThrow(), input, false);
             Wire readWire = analyzer.read(read, input, source);
             if (!(encoded.getStatement(i + 1) instanceof ExpressionStmt expression)
@@ -130,30 +118,23 @@ final class SentinelOptionalAnalyzer {
             for (var field : write.findAll(FieldAccessExpr.class))
                 if (field.getScope().toString().equals(alias)) field.setScope(new ThisExpr());
             Wire writeWire = analyzer.write(write, output, fieldName, readWire, source);
-            if (!readWire.type().equals(writeWire.type())
-                    || !readWire.shape().equals(writeWire.shape()))
+            if (!readWire.type().equals(writeWire.type()) || !readWire.shape().equals(writeWire.shape()))
                 throw new Unsupported("Optional-record reader and writer wire types differ");
-            fields.add(
-                    new Field(
-                            fieldName,
-                            Analyzer.declaredType(fieldName, source),
-                            readWire,
-                            writeWire));
+            fields.add(new Field(fieldName, Analyzer.declaredType(fieldName, source), readWire, writeWire));
         }
         if (fields.size() != record.getParameters().size())
             throw new Unsupported("Optional-record layout omits fields");
         String key = source.name() + "#sentinel";
         String generated = analyzer.index.generated(source.name()) + "_Payload";
-        Model model =
-                new Model(
-                        key,
-                        generated,
-                        List.copyOf(fields),
-                        List.of(),
-                        false,
-                        List.of(),
-                        null,
-                        "optional unsigned-byte sentinel");
+        Model model = new Model(
+                key,
+                generated,
+                List.copyOf(fields),
+                List.of(),
+                false,
+                List.of(),
+                null,
+                "optional unsigned-byte sentinel");
         analyzer.models.put(key, model);
         return new Wire(
                 "java.util.Optional<" + generated + ">",

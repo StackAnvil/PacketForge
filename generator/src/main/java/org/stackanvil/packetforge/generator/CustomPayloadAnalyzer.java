@@ -68,54 +68,41 @@ final class CustomPayloadAnalyzer {
             if (type.expression() instanceof MethodCallExpr factory
                     && factory.getScope().isPresent()) {
                 var reference =
-                        StaticJavaParser.parseExpression(
-                                factory.getScope().get() + "::" + factory.getNameAsString());
-                type =
-                        resolver.invoke(
-                                new StaticCodecResolver.Value(reference, type.source()),
-                                factory.getArguments().stream().map(type::child).toList());
+                        StaticJavaParser.parseExpression(factory.getScope().get() + "::" + factory.getNameAsString());
+                type = resolver.invoke(
+                        new StaticCodecResolver.Value(reference, type.source()),
+                        factory.getArguments().stream().map(type::child).toList());
             }
             String id = resolver.identifier(resolver.accessor(type, "id"));
             if (!channels.add(id)) throw new Unsupported("Repeated custom payload channel: " + id);
             cases.add(new DispatchCase(id, analyzer.codec(pair.getArgument(1), source), id));
         }
         String sourceKey = analyzer.codecVariants.getOrDefault(source.name(), source.name());
-        String name =
-                "dispatch_"
-                        + Integer.toUnsignedString(
-                                (sourceKey + "#custom:" + limit + "#" + cases).hashCode());
+        String name = "dispatch_" + Integer.toUnsignedString((sourceKey + "#custom:" + limit + "#" + cases).hashCode());
         Wire key = new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
-        Wire fallbackWire =
-                new Wire(
-                        "byte[]",
-                        "WireCodecs.remainingBytes(" + limit + ")",
-                        "remainingBytes(" + limit + ")",
-                        "net.minecraft.network.protocol.common.custom.DiscardedPayload#codec");
-        String entriesCode =
-                String.join(
-                        ", ",
-                        cases.stream()
-                                .map(
-                                        c ->
-                                                "java.util.Map.entry("
-                                                        + new com.google.gson.Gson().toJson(c.key())
-                                                        + ", (PacketCodec<?>) "
-                                                        + c.value().codec()
-                                                        + ")")
-                                .toList());
-        Wire implementation =
-                new Wire(
-                        "org.stackanvil.packetforge.commons.Variant<String>",
-                        "WireCodecs.dispatchWithFallback(WireCodecs.IDENTIFIER, java.util.Map.<String, PacketCodec<?>>ofEntries("
-                                + entriesCode
-                                + "), "
-                                + fallbackWire.codec()
-                                + ")",
-                        "dispatch:" + name);
-        String field =
-                sourceKey.contains("#")
-                        ? sourceKey.substring(sourceKey.indexOf('#') + 1)
-                        : "STREAM_CODEC";
+        Wire fallbackWire = new Wire(
+                "byte[]",
+                "WireCodecs.remainingBytes(" + limit + ")",
+                "remainingBytes(" + limit + ")",
+                "net.minecraft.network.protocol.common.custom.DiscardedPayload#codec");
+        String entriesCode = String.join(
+                ", ",
+                cases.stream()
+                        .map(c -> "java.util.Map.entry("
+                                + new com.google.gson.Gson().toJson(c.key())
+                                + ", (PacketCodec<?>) "
+                                + c.value().codec()
+                                + ")")
+                        .toList());
+        Wire implementation = new Wire(
+                "org.stackanvil.packetforge.commons.Variant<String>",
+                "WireCodecs.dispatchWithFallback(WireCodecs.IDENTIFIER, java.util.Map.<String, PacketCodec<?>>ofEntries("
+                        + entriesCode
+                        + "), "
+                        + fallbackWire.codec()
+                        + ")",
+                "dispatch:" + name);
+        String field = sourceKey.contains("#") ? sourceKey.substring(sourceKey.indexOf('#') + 1) : "STREAM_CODEC";
         analyzer.dispatches.put(
                 name,
                 new Dispatch(

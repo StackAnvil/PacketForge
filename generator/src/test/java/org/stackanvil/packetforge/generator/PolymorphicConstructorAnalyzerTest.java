@@ -10,9 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class PolymorphicConstructorAnalyzerTest {
-    @TempDir Path temporary;
-    private static final String SOURCE =
-            """
+    @TempDir
+    Path temporary;
+
+    private static final String SOURCE = """
         package net.minecraft.fixture;
         abstract class Base {
             final int token;
@@ -55,8 +56,7 @@ class PolymorphicConstructorAnalyzerTest {
         var analyzer = new Analyzer(temporary);
         new PolymorphicConstructorAnalyzer(analyzer)
                 .lower(
-                        StaticJavaParser.parseExpression(
-                                "StreamCodec.ofMember(Base::write, Base::read)"),
+                        StaticJavaParser.parseExpression("StreamCodec.ofMember(Base::write, Base::read)"),
                         analyzer.index.source("net.minecraft.fixture.Base"));
         return analyzer;
     }
@@ -71,28 +71,20 @@ class PolymorphicConstructorAnalyzerTest {
         assertEquals("UNIT", table.cases().getFirst().value().shape());
         var number = analyzer.models.get("net.minecraft.fixture.Base.Number#contents");
         assertEquals(
-                List.of("amount"), number.fields().stream().map(Analyzer.Field::name).toList());
+                List.of("amount"),
+                number.fields().stream().map(Analyzer.Field::name).toList());
         assertEquals(List.of("VAR_INT"), number.program().operations());
     }
 
     @Test
     void rejectsChangedDiscriminatorsHeaderTransformsAndPayloadWireMismatches() {
-        for (String body :
-                List.of(
-                        SOURCE.replace(
-                                "super(token, Base.Kind.NUMBER)", "super(token, Base.Kind.EMPTY)"),
-                        SOURCE.replace(
-                                "super(token, Base.Kind.NUMBER)",
-                                "super(token + 1, Base.Kind.NUMBER)"),
-                        SOURCE.replace(
-                                "this.amount = input.readVarInt()",
-                                "this.amount = input.readVarInt() + token"),
-                        SOURCE.replace(
-                                "VarInt.write(output, this.amount)",
-                                "output.writeInt(this.amount)"),
-                        SOURCE.replace(
-                                "output.writeEnum(this.kind)", "output.writeEnum(Base.Kind.EMPTY)"),
-                        SOURCE.replace("this.token = token", "this.token = token + 1"))) {
+        for (String body : List.of(
+                SOURCE.replace("super(token, Base.Kind.NUMBER)", "super(token, Base.Kind.EMPTY)"),
+                SOURCE.replace("super(token, Base.Kind.NUMBER)", "super(token + 1, Base.Kind.NUMBER)"),
+                SOURCE.replace("this.amount = input.readVarInt()", "this.amount = input.readVarInt() + token"),
+                SOURCE.replace("VarInt.write(output, this.amount)", "output.writeInt(this.amount)"),
+                SOURCE.replace("output.writeEnum(this.kind)", "output.writeEnum(Base.Kind.EMPTY)"),
+                SOURCE.replace("this.token = token", "this.token = token + 1"))) {
             assertThrows(SourceIndex.Unsupported.class, () -> analyze(body));
         }
     }

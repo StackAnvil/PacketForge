@@ -10,9 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class LoginQueryAnalyzerTest {
-    @TempDir Path temporary;
-    private static final String QUERY =
-            """
+    @TempDir
+    Path temporary;
+
+    private static final String QUERY = """
         package net.minecraft.network.protocol.login;
         record ClientboundCustomQueryPacket(int transactionId, Payload payload) {
             ClientboundCustomQueryPacket(FriendlyByteBuf buffer) {
@@ -39,19 +40,16 @@ class LoginQueryAnalyzerTest {
         Files.createDirectories(directory);
         Files.writeString(directory.resolve("ClientboundCustomQueryPacket.java"), source);
         Files.writeString(
-                directory.resolve("Discarded.java"),
-                "package net.minecraft.network.protocol.login; " + discarded);
+                directory.resolve("Discarded.java"), "package net.minecraft.network.protocol.login; " + discarded);
         var analyzer = new Analyzer(temporary);
         return new LoginQueryAnalyzer(analyzer)
                 .lower(
                         StaticJavaParser.parseExpression(
                                 "Packet.codec(ClientboundCustomQueryPacket::write, ClientboundCustomQueryPacket::new)"),
-                        analyzer.index.source(
-                                "net.minecraft.network.protocol.login.ClientboundCustomQueryPacket"));
+                        analyzer.index.source("net.minecraft.network.protocol.login.ClientboundCustomQueryPacket"));
     }
 
-    private static final String DISCARDED =
-            "record Discarded(Identifier id) { void write(FriendlyByteBuf target) {} }";
+    private static final String DISCARDED = "record Discarded(Identifier id) { void write(FriendlyByteBuf target) {} }";
 
     @Test
     void extractsBoundedDiscardedDataSeparatelyFromTheTransactionAndChannel() throws Exception {
@@ -60,23 +58,20 @@ class LoginQueryAnalyzerTest {
                 List.of("transactionId", "channel", "data"),
                 fields.stream().map(Analyzer.Field::name).toList());
         assertEquals("WireCodecs.remainingBytes(7)", fields.get(2).read().codec());
-        assertEquals("WireCodecs.remainingBytes(Integer.MAX_VALUE)", fields.get(2).write().codec());
+        assertEquals(
+                "WireCodecs.remainingBytes(Integer.MAX_VALUE)",
+                fields.get(2).write().codec());
         assertTrue(fields.get(2).read().projection().contains("discarded-query-data"));
     }
 
     @Test
     void rejectsPartialDiscardingChangedHeadersAndSerializedFallbackValues() {
-        for (String source :
-                List.of(
-                        QUERY.replace("bytes.skipBytes(count)", "bytes.skipBytes(count - 1)"),
-                        QUERY.replace("count <= 7", "count < 7"),
-                        QUERY.replace("buffer.readVarInt()", "buffer.readInt()"),
-                        QUERY.replace(
-                                "target.writeIdentifier(this.payload.id())",
-                                "target.writeUtf(this.payload.id())"),
-                        QUERY.replace(
-                                "return discard(channel, bytes)",
-                                "return knownOrUnknown(channel, bytes)"))) {
+        for (String source : List.of(
+                QUERY.replace("bytes.skipBytes(count)", "bytes.skipBytes(count - 1)"),
+                QUERY.replace("count <= 7", "count < 7"),
+                QUERY.replace("buffer.readVarInt()", "buffer.readInt()"),
+                QUERY.replace("target.writeIdentifier(this.payload.id())", "target.writeUtf(this.payload.id())"),
+                QUERY.replace("return discard(channel, bytes)", "return knownOrUnknown(channel, bytes)"))) {
             assertThrows(SourceIndex.Unsupported.class, () -> analyze(source, DISCARDED));
         }
         assertThrows(

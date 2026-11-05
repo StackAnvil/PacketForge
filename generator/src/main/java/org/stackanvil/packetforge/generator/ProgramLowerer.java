@@ -44,36 +44,25 @@ final class ProgramLowerer {
         if (codec instanceof ObjectCreationExpr anonymous
                 && anonymous.getAnonymousClassBody().isPresent()) {
             var members = anonymous.getAnonymousClassBody().get();
-            var readers =
-                    members.stream()
-                            .filter(
-                                    m ->
-                                            m instanceof MethodDeclaration method
-                                                    && method.getNameAsString().equals("decode"))
-                            .map(m -> (MethodDeclaration) m)
-                            .toList();
-            var writers =
-                    members.stream()
-                            .filter(
-                                    m ->
-                                            m instanceof MethodDeclaration method
-                                                    && method.getNameAsString().equals("encode"))
-                            .map(m -> (MethodDeclaration) m)
-                            .toList();
-            if (readers.size() != 1 || writers.size() != 1)
-                throw new Unsupported("Ambiguous anonymous stream codec");
+            var readers = members.stream()
+                    .filter(m -> m instanceof MethodDeclaration method
+                            && method.getNameAsString().equals("decode"))
+                    .map(m -> (MethodDeclaration) m)
+                    .toList();
+            var writers = members.stream()
+                    .filter(m -> m instanceof MethodDeclaration method
+                            && method.getNameAsString().equals("encode"))
+                    .map(m -> (MethodDeclaration) m)
+                    .toList();
+            if (readers.size() != 1 || writers.size() != 1) throw new Unsupported("Ambiguous anonymous stream codec");
             var reader = readers.getFirst();
             var writer = writers.getFirst();
-            decode =
-                    reader.getBody()
-                            .orElseThrow(
-                                    () -> new Unsupported("Incomplete serialization declaration"))
-                            .clone();
-            encode =
-                    writer.getBody()
-                            .orElseThrow(
-                                    () -> new Unsupported("Incomplete serialization declaration"))
-                            .clone();
+            decode = reader.getBody()
+                    .orElseThrow(() -> new Unsupported("Incomplete serialization declaration"))
+                    .clone();
+            encode = writer.getBody()
+                    .orElseThrow(() -> new Unsupported("Incomplete serialization declaration"))
+                    .clone();
             input = reader.getParameter(0).getNameAsString();
             output = writer.getParameter(0).getNameAsString();
             valueName = writer.getParameter(1).getNameAsString();
@@ -83,62 +72,42 @@ final class ProgramLowerer {
                 && call.getArguments().size() == 2
                 && call.getArgument(0) instanceof MethodReferenceExpr writer
                 && call.getArgument(1) instanceof MethodReferenceExpr reader) {
-            var writers =
-                    source.declaration().getMethodsByName(writer.getIdentifier()).stream()
-                            .filter(
-                                    m ->
-                                            (m.getParameters().size() == 1
-                                                            || m.getParameters().size() == 2)
-                                                    && buffer(m.getParameter(0).getTypeAsString()))
-                            .toList();
+            var writers = source.declaration().getMethodsByName(writer.getIdentifier()).stream()
+                    .filter(m ->
+                            (m.getParameters().size() == 1 || m.getParameters().size() == 2)
+                                    && buffer(m.getParameter(0).getTypeAsString()))
+                    .toList();
             if (writers.size() != 1) throw new Unsupported("Ambiguous imperative writer");
             var write = writers.getFirst();
             output = write.getParameter(0).getNameAsString();
-            encode =
-                    write.getBody()
-                            .orElseThrow(
-                                    () -> new Unsupported("Incomplete serialization declaration"))
-                            .clone();
+            encode = write.getBody()
+                    .orElseThrow(() -> new Unsupported("Incomplete serialization declaration"))
+                    .clone();
             if (write.getParameters().size() == 2)
                 valueName = write.getParameter(1).getNameAsString();
             constructorMode = reader.getIdentifier().equals("new");
             if (constructorMode) {
-                var constructors =
-                        source.declaration().getMembers().stream()
-                                .filter(
-                                        m ->
-                                                m instanceof ConstructorDeclaration c
-                                                        && c.getParameters().size() == 1
-                                                        && buffer(
-                                                                c.getParameter(0)
-                                                                        .getTypeAsString()))
-                                .map(m -> (ConstructorDeclaration) m)
-                                .toList();
-                if (constructors.size() != 1)
-                    throw new Unsupported("Ambiguous imperative constructor");
+                var constructors = source.declaration().getMembers().stream()
+                        .filter(m -> m instanceof ConstructorDeclaration c
+                                && c.getParameters().size() == 1
+                                && buffer(c.getParameter(0).getTypeAsString()))
+                        .map(m -> (ConstructorDeclaration) m)
+                        .toList();
+                if (constructors.size() != 1) throw new Unsupported("Ambiguous imperative constructor");
                 var constructor = constructors.getFirst();
                 input = constructor.getParameter(0).getNameAsString();
                 decode = constructor.getBody().clone();
             } else {
-                var readers =
-                        source.declaration().getMethodsByName(reader.getIdentifier()).stream()
-                                .filter(
-                                        m ->
-                                                m.getParameters().size() == 1
-                                                        && buffer(
-                                                                m.getParameter(0)
-                                                                        .getTypeAsString()))
-                                .toList();
+                var readers = source.declaration().getMethodsByName(reader.getIdentifier()).stream()
+                        .filter(m -> m.getParameters().size() == 1
+                                && buffer(m.getParameter(0).getTypeAsString()))
+                        .toList();
                 if (readers.size() != 1) throw new Unsupported("Ambiguous imperative reader");
                 var read = readers.getFirst();
                 input = read.getParameter(0).getNameAsString();
-                decode =
-                        read.getBody()
-                                .orElseThrow(
-                                        () ->
-                                                new Unsupported(
-                                                        "Incomplete serialization declaration"))
-                                .clone();
+                decode = read.getBody()
+                        .orElseThrow(() -> new Unsupported("Incomplete serialization declaration"))
+                        .clone();
             }
         } else throw new Unsupported("Not an imperative stream codec");
         return lowerBodies(decode, encode, input, output, constructorMode);
@@ -147,41 +116,28 @@ final class ProgramLowerer {
     Lowered lowerSerializer(MethodDeclaration reader, MethodDeclaration writer) {
         valueName = writer.getParameter(0).getNameAsString();
         return lowerBodies(
-                reader.getBody()
-                        .orElseThrow(() -> new Unsupported("Missing serializer reader body")),
-                writer.getBody()
-                        .orElseThrow(() -> new Unsupported("Missing serializer writer body")),
+                reader.getBody().orElseThrow(() -> new Unsupported("Missing serializer reader body")),
+                writer.getBody().orElseThrow(() -> new Unsupported("Missing serializer writer body")),
                 reader.getParameter(0).getNameAsString(),
                 writer.getParameter(1).getNameAsString(),
                 false);
     }
 
-    Lowered lowerBodies(
-            BlockStmt decode,
-            BlockStmt encode,
-            String input,
-            String output,
-            boolean constructorMode) {
+    Lowered lowerBodies(BlockStmt decode, BlockStmt encode, String input, String output, boolean constructorMode) {
         decode = decode.clone();
         encode = encode.clone();
         if (!decode.findAll(ExplicitConstructorInvocationStmt.class).isEmpty()) {
             if (decode.getStatements().size() != 1
-                    || !(decode.getStatement(0)
-                            instanceof ExplicitConstructorInvocationStmt invocation)
+                    || !(decode.getStatement(0) instanceof ExplicitConstructorInvocationStmt invocation)
                     || !invocation.isThis())
                 throw new Unsupported("Imperative constructor delegates with extra statements");
-            decode =
-                    new BlockStmt()
-                            .addStatement(
-                                    new ReturnStmt(
-                                            new ObjectCreationExpr(
-                                                    null,
-                                                    StaticJavaParser.parseClassOrInterfaceType(
-                                                            source.name()),
-                                                    new NodeList<>(
-                                                            invocation.getArguments().stream()
-                                                                    .map(Expression::clone)
-                                                                    .toList()))));
+            decode = new BlockStmt()
+                    .addStatement(new ReturnStmt(new ObjectCreationExpr(
+                            null,
+                            StaticJavaParser.parseClassOrInterfaceType(source.name()),
+                            new NodeList<>(invocation.getArguments().stream()
+                                    .map(Expression::clone)
+                                    .toList()))));
             constructorMode = false;
         }
         for (var loop : decode.findAll(ForStmt.class)) {
@@ -208,27 +164,15 @@ final class ProgramLowerer {
                     || !Set.of(induction + "++", "++" + induction)
                             .contains(loop.getUpdate().get(0).toString())
                     || body.findAll(AssignExpr.class).stream()
-                            .anyMatch(
-                                    a ->
-                                            a.getTarget() instanceof NameExpr n
-                                                    && Set.of(
-                                                                    induction.getNameAsString(),
-                                                                    count.getNameAsString())
-                                                            .contains(n.getNameAsString())))
-                continue;
+                            .anyMatch(a -> a.getTarget() instanceof NameExpr n
+                                    && Set.of(induction.getNameAsString(), count.getNameAsString())
+                                            .contains(n.getNameAsString()))) continue;
             if (!(body.getStatement(0) instanceof ExpressionStmt expression)
                     || !(expression.getExpression() instanceof VariableDeclarationExpr values)
                     || values.getVariables().size() != 1
-                    || !(values.getVariable(0).getInitializer().orElse(null)
-                            instanceof MethodCallExpr read)
+                    || !(values.getVariable(0).getInitializer().orElse(null) instanceof MethodCallExpr read)
                     || !read.getScope().map(Object::toString).orElse("").equals(input)
-                    || !Set.of(
-                                    "readVarLong",
-                                    "readVarInt",
-                                    "readByte",
-                                    "readShort",
-                                    "readInt",
-                                    "readLong")
+                    || !Set.of("readVarLong", "readVarInt", "readByte", "readShort", "readInt", "readLong")
                             .contains(read.getNameAsString())) continue;
             boundedArrayCounts.add(count.getNameAsString());
         }
@@ -242,19 +186,14 @@ final class ProgramLowerer {
             if (access.getScope() instanceof ThisExpr) used.add(access.getNameAsString());
         for (var access : encode.findAll(FieldAccessExpr.class))
             if (access.getScope() instanceof ThisExpr
-                    || access.getScope().toString().equals(valueName))
-                used.add(access.getNameAsString());
+                    || access.getScope().toString().equals(valueName)) used.add(access.getNameAsString());
         for (var call : encode.findAll(MethodCallExpr.class))
             if (call.getScope().map(Object::toString).orElse("").equals(valueName)
-                    && originalTypes.containsKey(call.getNameAsString()))
-                used.add(call.getNameAsString());
+                    && originalTypes.containsKey(call.getNameAsString())) used.add(call.getNameAsString());
         for (var assignment : decode.findAll(AssignExpr.class))
-            if (assignment.getTarget() instanceof FieldAccessExpr target
-                    && target.getScope() instanceof ThisExpr) {
+            if (assignment.getTarget() instanceof FieldAccessExpr target && target.getScope() instanceof ThisExpr) {
                 try {
-                    fields.put(
-                            target.getNameAsString(),
-                            analyzer.read(assignment.getValue(), input, source));
+                    fields.put(target.getNameAsString(), analyzer.read(assignment.getValue(), input, source));
                 } catch (Unsupported ignored) {
                 }
             }
@@ -267,8 +206,7 @@ final class ProgramLowerer {
                         inferred.containsKey(entry.getKey())
                                 ? inferred.get(entry.getKey())
                                 : valueType(entry.getValue()));
-        if (!fields.keySet().containsAll(used))
-            throw new Unsupported("Imperative layout uses unknown fields");
+        if (!fields.keySet().containsAll(used)) throw new Unsupported("Imperative layout uses unknown fields");
         decode.accept(new Translator(input, false), null);
         encode.accept(new Translator(output, true), null);
         String sourceInput = input, sourceOutput = output;
@@ -279,18 +217,11 @@ final class ProgramLowerer {
             for (var name : encode.findAll(NameExpr.class))
                 if (name.getNameAsString().equals(sourceOutput)) name.setName("output");
         if (!reads.equals(writes) || reads.isEmpty())
-            throw new Unsupported(
-                    "Imperative reader/writer wire operations differ: " + reads + " / " + writes);
-        List<Field> layout =
-                fields.entrySet().stream()
-                        .map(
-                                entry ->
-                                        new Field(
-                                                entry.getKey(),
-                                                originalTypes.get(entry.getKey()),
-                                                entry.getValue(),
-                                                entry.getValue()))
-                        .toList();
+            throw new Unsupported("Imperative reader/writer wire operations differ: " + reads + " / " + writes);
+        List<Field> layout = fields.entrySet().stream()
+                .map(entry -> new Field(
+                        entry.getKey(), originalTypes.get(entry.getKey()), entry.getValue(), entry.getValue()))
+                .toList();
         StringBuilder body = new StringBuilder();
         if (constructorMode)
             for (var field : layout)
@@ -305,28 +236,20 @@ final class ProgramLowerer {
             body.append("\nreturn new ")
                     .append(simple(generatedName))
                     .append("(")
-                    .append(
-                            String.join(
-                                    ", ",
-                                    fields.keySet().stream().map(ProgramLowerer::local).toList()))
+                    .append(String.join(
+                            ", ",
+                            fields.keySet().stream().map(ProgramLowerer::local).toList()))
                     .append(");");
         return new Lowered(
                 layout,
-                new Program(
-                        body.toString(),
-                        contents(encode),
-                        List.copyOf(reads),
-                        List.copyOf(helperCode.values())));
+                new Program(body.toString(), contents(encode), List.copyOf(reads), List.copyOf(helperCode.values())));
     }
 
     private void collectTypes(SourceIndex.Source target, Set<String> visited) {
         if (!visited.add(target.name())) return;
         if (target.declaration() instanceof ClassOrInterfaceDeclaration clazz)
             for (var parent : clazz.getExtendedTypes())
-                collectTypes(
-                        analyzer.index.source(
-                                analyzer.index.resolve(parent.getNameWithScope(), target)),
-                        visited);
+                collectTypes(analyzer.index.source(analyzer.index.resolve(parent.getNameWithScope(), target)), visited);
         if (target.declaration() instanceof RecordDeclaration record)
             for (var parameter : record.getParameters())
                 originalTypes.put(parameter.getNameAsString(), parameter.getTypeAsString());
@@ -344,39 +267,32 @@ final class ProgramLowerer {
                 && record.getParameters().size() == arguments.size()) {
             Map<String, Expression> result = new HashMap<>();
             for (int i = 0; i < arguments.size(); i++)
-                result.put(record.getParameter(i).getNameAsString(), arguments.get(i).clone());
+                result.put(
+                        record.getParameter(i).getNameAsString(),
+                        arguments.get(i).clone());
             return result;
         }
-        var constructors =
-                target.declaration().getMembers().stream()
-                        .filter(
-                                m ->
-                                        m instanceof ConstructorDeclaration c
-                                                && c.getParameters().size() == arguments.size())
-                        .map(m -> (ConstructorDeclaration) m)
-                        .filter(
-                                c -> {
-                                    for (int i = 0; i < arguments.size(); i++) {
-                                        String actual = expressionType(arguments.get(i));
-                                        if (actual != null
-                                                && !simple(actual)
-                                                        .equals(
-                                                                simple(
-                                                                        c.getParameter(i)
-                                                                                .getTypeAsString())))
-                                            return false;
-                                    }
-                                    return true;
-                                })
-                        .toList();
+        var constructors = target.declaration().getMembers().stream()
+                .filter(m -> m instanceof ConstructorDeclaration c
+                        && c.getParameters().size() == arguments.size())
+                .map(m -> (ConstructorDeclaration) m)
+                .filter(c -> {
+                    for (int i = 0; i < arguments.size(); i++) {
+                        String actual = expressionType(arguments.get(i));
+                        if (actual != null
+                                && !simple(actual)
+                                        .equals(simple(c.getParameter(i).getTypeAsString()))) return false;
+                    }
+                    return true;
+                })
+                .toList();
         if (constructors.size() != 1) throw new Unsupported("Ambiguous value constructor");
         var constructor = constructors.getFirst();
         Map<String, Expression> parameters = new HashMap<>(), result = new HashMap<>();
         for (int i = 0; i < arguments.size(); i++)
             parameters.put(constructor.getParameter(i).getNameAsString(), arguments.get(i));
         for (var statement : constructor.getBody().getStatements()) {
-            if (statement instanceof ExplicitConstructorInvocationStmt invocation
-                    && invocation.isThis()) {
+            if (statement instanceof ExplicitConstructorInvocationStmt invocation && invocation.isThis()) {
                 NodeList<Expression> values = new NodeList<>();
                 invocation.getArguments().forEach(e -> values.add(substitute(e, parameters)));
                 result.putAll(constructedFields(target, values, visited));
@@ -384,11 +300,8 @@ final class ProgramLowerer {
                     && !invocation.isThis()
                     && target.declaration() instanceof ClassOrInterfaceDeclaration clazz
                     && clazz.getExtendedTypes().size() == 1) {
-                var parent =
-                        analyzer.index.source(
-                                analyzer.index.resolve(
-                                        clazz.getExtendedTypes().get(0).getNameWithScope(),
-                                        target));
+                var parent = analyzer.index.source(
+                        analyzer.index.resolve(clazz.getExtendedTypes().get(0).getNameWithScope(), target));
                 NodeList<Expression> values = new NodeList<>();
                 invocation.getArguments().forEach(e -> values.add(substitute(e, parameters)));
                 result.putAll(constructedFields(parent, values, visited));
@@ -423,14 +336,11 @@ final class ProgramLowerer {
                     return receiver.substring(9, receiver.length() - 1);
             }
             try {
-                var target =
-                        helperOwner(
-                                call.getScope().map(Object::toString).orElse(""),
-                                call.getNameAsString());
-                var methods =
-                        target.declaration().getMethodsByName(call.getNameAsString()).stream()
-                                .filter(m -> m.getParameters().size() == call.getArguments().size())
-                                .toList();
+                var target = helperOwner(call.getScope().map(Object::toString).orElse(""), call.getNameAsString());
+                var methods = target.declaration().getMethodsByName(call.getNameAsString()).stream()
+                        .filter(m ->
+                                m.getParameters().size() == call.getArguments().size())
+                        .toList();
                 if (methods.size() == 1) return methods.getFirst().getTypeAsString();
             } catch (Unsupported ignored) {
             }
@@ -438,21 +348,19 @@ final class ProgramLowerer {
         return null;
     }
 
-    private static Expression substitute(
-            Expression expression, Map<String, Expression> parameters) {
-        return (Expression)
-                expression
-                        .clone()
-                        .accept(
-                                new ModifierVisitor<Void>() {
-                                    @Override
-                                    public Visitable visit(NameExpr name, Void ignored) {
-                                        return parameters.containsKey(name.getNameAsString())
-                                                ? parameters.get(name.getNameAsString()).clone()
-                                                : name;
-                                    }
-                                },
-                                null);
+    private static Expression substitute(Expression expression, Map<String, Expression> parameters) {
+        return (Expression) expression
+                .clone()
+                .accept(
+                        new ModifierVisitor<Void>() {
+                            @Override
+                            public Visitable visit(NameExpr name, Void ignored) {
+                                return parameters.containsKey(name.getNameAsString())
+                                        ? parameters.get(name.getNameAsString()).clone()
+                                        : name;
+                            }
+                        },
+                        null);
     }
 
     private Field optionalMapping(MethodCallExpr call) {
@@ -468,20 +376,15 @@ final class ProgramLowerer {
         if (!value.shape().startsWith("model:"))
             throw new Unsupported("Optional projection does not reference a wire record");
         var model = analyzer.models.get(value.shape().substring(6));
-        var target =
-                analyzer.index.source(
-                        analyzer.index.resolve(reference.getScope().toString(), source));
+        var target = analyzer.index.source(
+                analyzer.index.resolve(reference.getScope().toString(), source));
         var concrete = analyzer.index.source(model.originalName().split("#", 2)[0]);
         if (!inherits(concrete, target.name(), new HashSet<>()))
             throw new Unsupported("Optional getter belongs to another value type");
-        var concreteGetter =
-                reference
-                        .clone()
-                        .setScope(new TypeExpr(StaticJavaParser.parseType(concrete.name())));
+        var concreteGetter = reference.clone().setScope(new TypeExpr(StaticJavaParser.parseType(concrete.name())));
         String field = analyzer.getterField(concreteGetter, concrete);
         var fields = model.fields().stream().filter(f -> f.name().equals(field)).toList();
-        if (fields.size() != 1)
-            throw new Unsupported("Optional projection does not select a wire field");
+        if (fields.size() != 1) throw new Unsupported("Optional projection does not select a wire field");
         return fields.getFirst();
     }
 
@@ -489,42 +392,36 @@ final class ProgramLowerer {
         if (value.name().equals(parent)) return true;
         if (!visited.add(value.name())) return false;
         List<com.github.javaparser.ast.type.ClassOrInterfaceType> parents = new ArrayList<>();
-        if (value.declaration() instanceof RecordDeclaration record)
-            parents.addAll(record.getImplementedTypes());
+        if (value.declaration() instanceof RecordDeclaration record) parents.addAll(record.getImplementedTypes());
         if (value.declaration() instanceof ClassOrInterfaceDeclaration clazz) {
             parents.addAll(clazz.getImplementedTypes());
             parents.addAll(clazz.getExtendedTypes());
         }
         for (var type : parents)
             if (inherits(
-                    analyzer.index.source(analyzer.index.resolve(type.getNameWithScope(), value)),
-                    parent,
-                    visited)) return true;
+                    analyzer.index.source(analyzer.index.resolve(type.getNameWithScope(), value)), parent, visited))
+                return true;
         return false;
     }
 
     private Wire valueType(String name) {
         name = name.replaceAll("@[A-Za-z0-9_.]+(?:\\([^)]*\\))?\\s*", "").strip();
-        String codec =
-                switch (name) {
-                    case "boolean" -> "BOOL";
-                    case "byte" -> "BYTE";
-                    case "short" -> "SHORT";
-                    case "int" -> "INT";
-                    case "long" -> "LONG";
-                    case "float" -> "FLOAT";
-                    case "double" -> "DOUBLE";
-                    default -> null;
-                };
+        String codec = switch (name) {
+            case "boolean" -> "BOOL";
+            case "byte" -> "BYTE";
+            case "short" -> "SHORT";
+            case "int" -> "INT";
+            case "long" -> "LONG";
+            case "float" -> "FLOAT";
+            case "double" -> "DOUBLE";
+            default -> null;
+        };
         if (codec != null) return new Wire(name, "WireCodecs." + codec, codec);
         if (name.equals("String")) return new Wire("String", "WireCodecs.STRING", "UTF8");
-        if (name.equals("Identifier"))
-            return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
+        if (name.equals("Identifier")) return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         if (name.equals("BlockPos"))
             return new Wire(
-                    "org.stackanvil.packetforge.commons.BlockPosition",
-                    "WireCodecs.BLOCK_POSITION",
-                    "BLOCK_POSITION");
+                    "org.stackanvil.packetforge.commons.BlockPosition", "WireCodecs.BLOCK_POSITION", "BLOCK_POSITION");
         if (name.equals("CompoundTag"))
             return new Wire(
                     "org.stackanvil.packetforge.commons.NbtTag.Compound",
@@ -534,34 +431,22 @@ final class ProgramLowerer {
             return new Wire(
                     "org.stackanvil.packetforge.commons.NbtTag",
                     "NbtCodecs.TAG",
-                    name.equals("Component")
-                            ? "NBT:net.minecraft.network.chat.ComponentSerialization#CODEC"
-                            : "NBT");
-        if (name.equals("UUID"))
-            return new Wire("java.util.UUID", "WireCodecs.UUID_CODEC", "UUID_CODEC");
-        if (name.equals("byte[]"))
-            return new Wire("byte[]", "WireCodecs.byteArray(Integer.MAX_VALUE)", "byteArray");
+                    name.equals("Component") ? "NBT:net.minecraft.network.chat.ComponentSerialization#CODEC" : "NBT");
+        if (name.equals("UUID")) return new Wire("java.util.UUID", "WireCodecs.UUID_CODEC", "UUID_CODEC");
+        if (name.equals("byte[]")) return new Wire("byte[]", "WireCodecs.byteArray(Integer.MAX_VALUE)", "byteArray");
         if (name.equals("VecDelta")) return new MovementDeltaAnalyzer(analyzer).value();
-        if (name.equals("BlockState"))
-            return new Wire("int", "WireCodecs.VAR_INT", "REGISTRY_BLOCK_STATE");
+        if (name.equals("BlockState")) return new Wire("int", "WireCodecs.VAR_INT", "REGISTRY_BLOCK_STATE");
         if (name.endsWith("[]")) {
             Wire component = valueType(name.substring(0, name.length() - 2));
-            return new Wire(
-                    component.type() + "[]", "", "program-array<" + component.shape() + ">");
+            return new Wire(component.type() + "[]", "", "program-array<" + component.shape() + ">");
         }
         if (name.equals("ChunkPos"))
             return new Wire(
-                    "org.stackanvil.packetforge.commons.ChunkPosition",
-                    "WireCodecs.CHUNK_POSITION",
-                    "CHUNK_POSITION");
+                    "org.stackanvil.packetforge.commons.ChunkPosition", "WireCodecs.CHUNK_POSITION", "CHUNK_POSITION");
         if (name.equals("Vec3i"))
-            return new Wire(
-                    "org.stackanvil.packetforge.commons.IntVector3",
-                    "VectorCodecs.INT",
-                    "VECTOR3I");
+            return new Wire("org.stackanvil.packetforge.commons.IntVector3", "VectorCodecs.INT", "VECTOR3I");
         if (name.equals("Vec3"))
-            return new Wire(
-                    "org.stackanvil.packetforge.commons.Vector3", "VectorCodecs.DOUBLE", "VECTOR3");
+            return new Wire("org.stackanvil.packetforge.commons.Vector3", "VectorCodecs.DOUBLE", "VECTOR3");
         var parsed = StaticJavaParser.parseType(name);
         if (parsed.isClassOrInterfaceType()
                 && parsed.asClassOrInterfaceType().getTypeArguments().isPresent()) {
@@ -571,13 +456,10 @@ final class ProgramLowerer {
                             .contains(raw)
                     && arguments.size() == 1) {
                 Wire inner = valueType(arguments.get(0).asString());
-                String kind =
-                        raw.equals("Optional") ? "optional" : raw.contains("Set") ? "set" : "list";
+                String kind = raw.equals("Optional") ? "optional" : raw.contains("Set") ? "set" : "list";
                 return new Wire(
                         "java.util."
-                                + (kind.equals("optional")
-                                        ? "Optional"
-                                        : kind.equals("set") ? "Set" : "List")
+                                + (kind.equals("optional") ? "Optional" : kind.equals("set") ? "Set" : "List")
                                 + "<"
                                 + boxed(inner.type())
                                 + ">",
@@ -605,8 +487,7 @@ final class ProgramLowerer {
             }
             if (raw.equals("Holder") && arguments.size() == 1)
                 return valueType(arguments.get(0).asString());
-            if (raw.equals("ResourceKey"))
-                return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
+            if (raw.equals("ResourceKey")) return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         }
         var target = analyzer.index.source(analyzer.index.resolve(name, source));
         if (target.declaration() instanceof EnumDeclaration) {
@@ -617,8 +498,7 @@ final class ProgramLowerer {
                     "enum:" + enumeration.originalName());
         }
         try {
-            return analyzer.codec(
-                    new FieldAccessExpr(new NameExpr(target.name()), "STREAM_CODEC"), target);
+            return analyzer.codec(new FieldAccessExpr(new NameExpr(target.name()), "STREAM_CODEC"), target);
         } catch (Unsupported codecMissing) {
             return modelWire(analyzer.model(target.name()));
         }
@@ -641,24 +521,13 @@ final class ProgramLowerer {
             if (scope.equals(buffer)) {
                 if (method.equals("readBytes") && !encode && call.getArguments().size() == 1) {
                     reads.add("FIXED_BYTES");
-                    return expression(
-                            "WireCodecs.readFixedInto("
-                                    + buffer
-                                    + ", "
-                                    + call.getArgument(0)
-                                    + ")");
+                    return expression("WireCodecs.readFixedInto(" + buffer + ", " + call.getArgument(0) + ")");
                 }
                 if (method.equals("writeBytes") && encode && call.getArguments().size() == 1) {
                     writes.add("FIXED_BYTES");
                     Expression value = (Expression) call.getArgument(0).accept(this, null);
                     return expression(
-                            "WireCodecs.fixedBytes(("
-                                    + value
-                                    + ").length).encode("
-                                    + buffer
-                                    + ", "
-                                    + value
-                                    + ")");
+                            "WireCodecs.fixedBytes((" + value + ").length).encode(" + buffer + ", " + value + ")");
                 }
                 if (!encode && method.startsWith("read")) {
                     Wire wire = analyzer.read(original, buffer, source);
@@ -676,13 +545,8 @@ final class ProgramLowerer {
                             && original.getArgument(0) instanceof FieldAccessExpr field
                             && field.getScope() instanceof ThisExpr
                             && fields.containsKey(field.getNameAsString())) {
-                        wire =
-                                analyzer.write(
-                                        original,
-                                        buffer,
-                                        field.getNameAsString(),
-                                        fields.get(field.getNameAsString()),
-                                        source);
+                        wire = analyzer.write(
+                                original, buffer, field.getNameAsString(), fields.get(field.getNameAsString()), source);
                     } else if (suffix.equals("Enum")) {
                         wire = fieldWire(original.getArgument(0));
                         if (!wire.shape().startsWith("enum:"))
@@ -698,8 +562,7 @@ final class ProgramLowerer {
                     call.setArgument(0, (Expression) call.getArgument(0).accept(this, null));
                     String argument = call.getArgument(0).toString();
                     if (Set.of("boolean", "byte", "short", "int", "long", "float", "double")
-                            .contains(wire.type()))
-                        argument = "(" + wire.type() + ")(" + argument + ")";
+                            .contains(wire.type())) argument = "(" + wire.type() + ")(" + argument + ")";
                     return expression(wire.codec() + ".encode(" + buffer + ", " + argument + ")");
                 }
                 throw new Unsupported("Unsupported imperative buffer operation: " + original);
@@ -713,8 +576,7 @@ final class ProgramLowerer {
                 else if (!encode && method.equals("read")) reads.add("MOVEMENT_DELTA");
                 else throw new Unsupported("Movement-delta helper used in the wrong direction");
                 Expression argument = (Expression) original.getArgument(1).accept(this, null);
-                return expression(
-                        "MovementCodecs." + method + "(" + buffer + ", " + argument + ")");
+                return expression("MovementCodecs." + method + "(" + buffer + ", " + argument + ")");
             }
             if (method.equals("byId")
                     && original.getArguments().size() == 1
@@ -728,9 +590,7 @@ final class ProgramLowerer {
             }
             if (method.equals("getId")
                     && original.getArguments().size() == 1
-                    && analyzer.index
-                            .resolve(scope, source)
-                            .equals("net.minecraft.world.level.block.Block")) {
+                    && analyzer.index.resolve(scope, source).equals("net.minecraft.world.level.block.Block")) {
                 writes.add("REGISTRY_BLOCK_STATE");
                 return original.getArgument(0).accept(this, null);
             }
@@ -738,8 +598,7 @@ final class ProgramLowerer {
                     && method.equals("read")
                     && original.getArguments().size() == 1
                     && original.getArgument(0).toString().equals(buffer)
-                    && !encode)
-                return new MethodCallExpr(new NameExpr(buffer), "read" + scope).accept(this, null);
+                    && !encode) return new MethodCallExpr(new NameExpr(buffer), "read" + scope).accept(this, null);
             if (Set.of("VarInt", "VarLong").contains(scope)
                     && method.equals("write")
                     && original.getArguments().size() == 2
@@ -750,10 +609,7 @@ final class ProgramLowerer {
                                 "write" + scope,
                                 new NodeList<>(original.getArgument(1).clone()))
                         .accept(this, null);
-            if (scope.equals(valueName)
-                    && encode
-                    && call.getArguments().isEmpty()
-                    && fields.containsKey(method)) {
+            if (scope.equals(valueName) && encode && call.getArguments().isEmpty() && fields.containsKey(method)) {
                 call.setScope(new NameExpr("value"));
                 return call;
             }
@@ -761,14 +617,9 @@ final class ProgramLowerer {
                     && original.getArguments().size() == 1
                     && original.getArgument(0).toString().equals(buffer)
                     && !encode) {
-                Wire wire =
-                        analyzer.codec(
-                                original.getScope()
-                                        .orElseThrow(
-                                                () ->
-                                                        new Unsupported(
-                                                                "Incomplete serialization declaration")),
-                                source);
+                Wire wire = analyzer.codec(
+                        original.getScope().orElseThrow(() -> new Unsupported("Incomplete serialization declaration")),
+                        source);
                 reads.add(physical(wire.shape()));
                 return expression(wire.codec() + ".decode(" + buffer + ")");
             }
@@ -776,18 +627,12 @@ final class ProgramLowerer {
                     && original.getArguments().size() == 2
                     && original.getArgument(0).toString().equals(buffer)
                     && encode) {
-                Wire wire =
-                        analyzer.codec(
-                                original.getScope()
-                                        .orElseThrow(
-                                                () ->
-                                                        new Unsupported(
-                                                                "Incomplete serialization declaration")),
-                                source);
+                Wire wire = analyzer.codec(
+                        original.getScope().orElseThrow(() -> new Unsupported("Incomplete serialization declaration")),
+                        source);
                 writes.add(physical(wire.shape()));
                 call.setArgument(1, (Expression) call.getArgument(1).accept(this, null));
-                return expression(
-                        wire.codec() + ".encode(" + buffer + ", " + call.getArgument(1) + ")");
+                return expression(wire.codec() + ".encode(" + buffer + ", " + call.getArgument(1) + ")");
             }
             // Enum.ordinal is a JDK operation on generated enums.
             if (method.equals("ordinal")
@@ -795,44 +640,38 @@ final class ProgramLowerer {
                     && original.getScope().isPresent()) {
                 String type = expressionType(original.getScope().get());
                 Wire wire = type == null ? fieldWire(original.getScope().get()) : valueType(type);
-                if (!wire.shape().startsWith("enum:"))
-                    throw new Unsupported("Ordinal receiver is not an enum");
+                if (!wire.shape().startsWith("enum:")) throw new Unsupported("Ordinal receiver is not an enum");
                 call.setScope((Expression) call.getScope().orElseThrow().accept(this, null));
                 return call;
             }
             if (scope.equals("Lists")
                     && method.equals("newArrayList")
-                    && original.getArguments().isEmpty())
-                return expression("new java.util.ArrayList<>()");
+                    && original.getArguments().isEmpty()) return expression("new java.util.ArrayList<>()");
             if (scope.equals("Pair")
                     && method.equals("of")
                     && original.getArguments().size() == 2) {
                 Expression a = (Expression) original.getArgument(0).accept(this, null),
                         b = (Expression) original.getArgument(1).accept(this, null);
-                return expression(
-                        "new org.stackanvil.packetforge.commons.Pair<>(" + a + ", " + b + ")");
+                return expression("new org.stackanvil.packetforge.commons.Pair<>(" + a + ", " + b + ")");
             }
             if (method.equals("get")
                     && original.getArguments().size() == 1
                     && original.getScope().orElse(null) instanceof FieldAccessExpr values
                     && values.getNameAsString().equals("VALUES")) {
-                var owner =
-                        analyzer.index.source(
-                                analyzer.index.resolve(values.getScope().toString(), source));
+                var owner = analyzer.index.source(
+                        analyzer.index.resolve(values.getScope().toString(), source));
                 if (!(owner.declaration() instanceof EnumDeclaration))
                     throw new Unsupported("Indexed values are not an enum");
-                var initializer =
-                        owner.declaration()
-                                .getFieldByName("VALUES")
-                                .flatMap(f -> f.getVariable(0).getInitializer())
-                                .orElseThrow(() -> new Unsupported("Enum has no values list"));
+                var initializer = owner.declaration()
+                        .getFieldByName("VALUES")
+                        .flatMap(f -> f.getVariable(0).getInitializer())
+                        .orElseThrow(() -> new Unsupported("Enum has no values list"));
                 if (!initializer.toString().equals("List.of(values())"))
                     throw new Unsupported("Enum values list changes its order");
-                return expression(
-                        analyzer.model(owner.name()).generatedName()
-                                + ".values()["
-                                + original.getArgument(0).accept(this, null)
-                                + "]");
+                return expression(analyzer.model(owner.name()).generatedName()
+                        + ".values()["
+                        + original.getArgument(0).accept(this, null)
+                        + "]");
             }
             if (method.equals("map")
                     && call.getArguments().size() == 1
@@ -842,9 +681,7 @@ final class ProgramLowerer {
                 call.setArgument(
                         0,
                         expression(
-                                "$packetforge_mapped_value -> $packetforge_mapped_value."
-                                        + projected.name()
-                                        + "()"));
+                                "$packetforge_mapped_value -> $packetforge_mapped_value." + projected.name() + "()"));
                 return call;
             }
             if (method.equals("ifPresent")
@@ -855,25 +692,22 @@ final class ProgramLowerer {
                     && encode
                     && original.getScope().orElse(null) instanceof MethodCallExpr mapped) {
                 Field projected = optionalMapping(mapped);
-                Wire wire =
-                        analyzer.read(
-                                new MethodCallExpr(
-                                        new NameExpr("input"),
-                                        reference.getIdentifier().replaceFirst("write", "read")),
-                                "input",
-                                source);
+                Wire wire = analyzer.read(
+                        new MethodCallExpr(
+                                new NameExpr("input"), reference.getIdentifier().replaceFirst("write", "read")),
+                        "input",
+                        source);
                 if (!wire.type().equals(projected.read().type()))
                     throw new Unsupported("Optional projection writer changes its value type");
                 writes.add(physical(wire.shape()));
                 call.setScope((Expression) original.getScope().get().accept(this, null));
                 call.setArgument(
                         0,
-                        expression(
-                                "$packetforge_optional_value -> "
-                                        + wire.codec()
-                                        + ".encode("
-                                        + buffer
-                                        + ", $packetforge_optional_value)"));
+                        expression("$packetforge_optional_value -> "
+                                + wire.codec()
+                                + ".encode("
+                                + buffer
+                                + ", $packetforge_optional_value)"));
                 return call;
             }
             if (Set.of("Optional", "List", "Set", "Map").contains(scope)
@@ -892,8 +726,7 @@ final class ProgramLowerer {
             String scopeType = expressionType(original.getScope().orElse(new NameExpr("$unknown")));
             if (scopeType == null
                     && original.getScope().orElse(null) instanceof FieldAccessExpr access
-                    && access.getScope() instanceof ThisExpr)
-                scopeType = originalTypes.get(access.getNameAsString());
+                    && access.getScope() instanceof ThisExpr) scopeType = originalTypes.get(access.getNameAsString());
             if (scopeType != null
                     && scopeType.equals("VecDelta")
                     && method.equals("stepCount")
@@ -922,8 +755,7 @@ final class ProgramLowerer {
                                     "contains",
                                     "iterator")
                             .contains(method)
-                    && scopeType.matches(
-                            "(?:Optional|List|Set|Map|ArrayList|HashSet|Collection)<.*")) {
+                    && scopeType.matches("(?:Optional|List|Set|Map|ArrayList|HashSet|Collection)<.*")) {
                 call.setScope((Expression) call.getScope().orElseThrow().accept(this, null));
                 for (int i = 0; i < call.getArguments().size(); i++)
                     call.setArgument(i, (Expression) call.getArgument(i).accept(this, null));
@@ -944,24 +776,18 @@ final class ProgramLowerer {
                 return call;
             }
             SourceIndex.Source target = helperOwner(scope, method);
-            var candidates =
-                    target.declaration().getMethodsByName(method).stream()
-                            .filter(
-                                    m ->
-                                            m.isStatic()
-                                                    && m.getParameters().size()
-                                                            == original.getArguments().size())
-                            .toList();
-            if (candidates.size() != 1)
-                throw new Unsupported("Ambiguous imperative helper: " + original);
+            var candidates = target.declaration().getMethodsByName(method).stream()
+                    .filter(m -> m.isStatic()
+                            && m.getParameters().size()
+                                    == original.getArguments().size())
+                    .toList();
+            if (candidates.size() != 1) throw new Unsupported("Ambiguous imperative helper: " + original);
             var helper = candidates.getFirst();
             if (!encode
                     && helper.getParameters().size() == 1
                     && buffer(helper.getParameter(0).getTypeAsString())
                     && original.getArgument(0).toString().equals(buffer)
-                    && analyzer.index
-                            .resolve(helper.getTypeAsString(), target)
-                            .equals(target.name())) {
+                    && analyzer.index.resolve(helper.getTypeAsString(), target).equals(target.name())) {
                 Wire wire = modelWire(analyzer.model(target.name()));
                 reads.add(physical(wire.shape()));
                 return expression(wire.codec() + ".decode(" + buffer + ")");
@@ -983,10 +809,7 @@ final class ProgramLowerer {
             if (!helperCode.containsKey(key)) {
                 if ((!helper.getType().isPrimitiveType() && !helper.getType().isVoidType())
                         || helper.getParameters().stream()
-                                .anyMatch(
-                                        p ->
-                                                !p.getType().isPrimitiveType()
-                                                        && !buffer(p.getTypeAsString())))
+                                .anyMatch(p -> !p.getType().isPrimitiveType() && !buffer(p.getTypeAsString())))
                     throw new Unsupported("Imperative helper has domain object parameters");
                 helperCode.put(key, "");
                 MethodDeclaration lowered = helper.clone();
@@ -1005,8 +828,7 @@ final class ProgramLowerer {
                 helperCode.put(key, lowered.toString());
             }
             NodeList<Expression> values = new NodeList<>();
-            for (Expression argument : original.getArguments())
-                values.add((Expression) argument.accept(this, null));
+            for (Expression argument : original.getArguments()) values.add((Expression) argument.accept(this, null));
             return new MethodCallExpr(null, generated, values);
         }
 
@@ -1015,8 +837,7 @@ final class ProgramLowerer {
             FieldAccessExpr original = field.clone();
             if (Set.of("Integer", "Long", "Float", "Double")
                             .contains(original.getScope().toString())
-                    && Set.of("MIN_VALUE", "MAX_VALUE").contains(original.getNameAsString()))
-                return field;
+                    && Set.of("MIN_VALUE", "MAX_VALUE").contains(original.getNameAsString())) return field;
             if (original.getNameAsString().equals("length")) {
                 field.setScope((Expression) field.getScope().accept(this, null));
                 return field;
@@ -1034,26 +855,19 @@ final class ProgramLowerer {
                 var target = analyzer.index.source(owner);
                 if (target.declaration() instanceof EnumDeclaration enumeration
                         && enumeration.getEntries().stream()
-                                .anyMatch(
-                                        c ->
-                                                c.getNameAsString()
-                                                        .equals(original.getNameAsString())))
-                    return expression(
-                            analyzer.index.generated(owner) + "." + original.getNameAsString());
+                                .anyMatch(c -> c.getNameAsString().equals(original.getNameAsString())))
+                    return expression(analyzer.index.generated(owner) + "." + original.getNameAsString());
             } catch (Unsupported ignoredResolution) {
             }
             try {
-                var target =
-                        analyzer.index.source(
-                                analyzer.index.resolve(original.getScope().toString(), source));
-                var initializer =
-                        target.declaration()
-                                .getFieldByName(original.getNameAsString())
-                                .flatMap(f -> f.getVariable(0).getInitializer())
-                                .orElse(null);
+                var target = analyzer.index.source(
+                        analyzer.index.resolve(original.getScope().toString(), source));
+                var initializer = target.declaration()
+                        .getFieldByName(original.getNameAsString())
+                        .flatMap(f -> f.getVariable(0).getInitializer())
+                        .orElse(null);
                 if (initializer != null && initializer.toString().equals("Component.empty()"))
-                    return expression(
-                            "new org.stackanvil.packetforge.commons.NbtTag.StringValue(\"\")");
+                    return expression("new org.stackanvil.packetforge.commons.NbtTag.StringValue(\"\")");
                 if (initializer instanceof LiteralExpr) return initializer.clone();
             } catch (Unsupported missingConstant) {
             }
@@ -1062,8 +876,7 @@ final class ProgramLowerer {
 
         @Override
         public Visitable visit(ObjectCreationExpr creation, Void ignored) {
-            if (Set.of("IllegalArgumentException", "IllegalStateException")
-                    .contains(creation.getTypeAsString())) {
+            if (Set.of("IllegalArgumentException", "IllegalStateException").contains(creation.getTypeAsString())) {
                 super.visit(creation, ignored);
                 return creation;
             }
@@ -1071,20 +884,19 @@ final class ProgramLowerer {
                     && analyzer.index
                             .resolve(creation.getTypeAsString(), source)
                             .equals(source.name())) {
-                Map<String, Expression> values =
-                        constructedFields(source, creation.getArguments(), new HashSet<>());
+                Map<String, Expression> values = constructedFields(source, creation.getArguments(), new HashSet<>());
                 NodeList<Expression> arguments = new NodeList<>();
                 for (String field : fields.keySet()) {
                     Expression value = values.get(field);
-                    if (value == null)
-                        throw new Unsupported("Constructor does not initialize " + field);
+                    if (value == null) throw new Unsupported("Constructor does not initialize " + field);
                     arguments.add((Expression) value.accept(this, null));
                 }
                 return new ObjectCreationExpr(
                         null, StaticJavaParser.parseClassOrInterfaceType(generatedName), arguments);
             }
             String owner = analyzer.index.resolve(creation.getType().getNameWithScope(), source);
-            if (Set.of("net.minecraft.core.BlockPos", "net.minecraft.core.Vec3i").contains(owner)
+            if (Set.of("net.minecraft.core.BlockPos", "net.minecraft.core.Vec3i")
+                                    .contains(owner)
                             && creation.getArguments().size() == 3
                     || owner.equals("net.minecraft.world.phys.Vec3")
                             && creation.getArguments().size() == 3
@@ -1102,9 +914,7 @@ final class ProgramLowerer {
                 return creation;
             }
             try {
-                Wire targetWire =
-                        analyzer.codec(
-                                new FieldAccessExpr(new NameExpr(owner), "STREAM_CODEC"), source);
+                Wire targetWire = analyzer.codec(new FieldAccessExpr(new NameExpr(owner), "STREAM_CODEC"), source);
                 if (targetWire.shape().startsWith("model:")) {
                     var model = analyzer.models.get(targetWire.shape().substring(6));
                     var target = analyzer.index.source(owner);
@@ -1113,14 +923,11 @@ final class ProgramLowerer {
                     NodeList<Expression> arguments = new NodeList<>();
                     for (var field : model.fields()) {
                         if (!values.containsKey(field.name()))
-                            throw new Unsupported(
-                                    "Projected constructor omits wire field: " + field.name());
+                            throw new Unsupported("Projected constructor omits wire field: " + field.name());
                         arguments.add((Expression) values.get(field.name()).accept(this, null));
                     }
                     return new ObjectCreationExpr(
-                            null,
-                            StaticJavaParser.parseClassOrInterfaceType(model.generatedName()),
-                            arguments);
+                            null, StaticJavaParser.parseClassOrInterfaceType(model.generatedName()), arguments);
                 }
             } catch (Unsupported projectionMissing) {
             }
@@ -1141,25 +948,17 @@ final class ProgramLowerer {
             String component = creation.getElementType().asString();
             if (creation.getLevels().size() != 1
                     || creation.getLevels().get(0).getDimension().isEmpty())
-                throw new Unsupported(
-                        "Array allocation is not a bounded one-dimensional wire array");
+                throw new Unsupported("Array allocation is not a bounded one-dimensional wire array");
             Expression count = creation.getLevels().get(0).getDimension().get();
             if (!(count instanceof IntegerLiteralExpr literal
                     && literal.asNumber().intValue() >= 0
                     && literal.asNumber().intValue() <= 65536)) {
-                if (encode
-                        || !(count instanceof NameExpr name)
-                        || !boundedArrayCounts.contains(name.getNameAsString()))
+                if (encode || !(count instanceof NameExpr name) || !boundedArrayCounts.contains(name.getNameAsString()))
                     throw new Unsupported("Array allocation count has no proven input-byte bound");
                 creation.getLevels()
                         .get(0)
                         .setDimension(
-                                expression(
-                                        "WireCodecs.boundedCount("
-                                                + count
-                                                + ", "
-                                                + buffer
-                                                + ".readableBytes())"));
+                                expression("WireCodecs.boundedCount(" + count + ", " + buffer + ".readableBytes())"));
             }
             Wire wire = valueType(component);
             creation.setElementType(StaticJavaParser.parseType(wire.type()));
@@ -1184,22 +983,17 @@ final class ProgramLowerer {
             if (!target.declaration().getMethodsByName(method).isEmpty()) return target;
             if (target.declaration() instanceof ClassOrInterfaceDeclaration clazz
                     && clazz.getExtendedTypes().size() == 1) {
-                var parent =
-                        analyzer.index.source(
-                                analyzer.index.resolve(
-                                        clazz.getExtendedTypes().get(0).getNameWithScope(),
-                                        target));
+                var parent = analyzer.index.source(
+                        analyzer.index.resolve(clazz.getExtendedTypes().get(0).getNameWithScope(), target));
                 if (!parent.declaration().getMethodsByName(method).isEmpty()) return parent;
             }
             int dot = target.name().lastIndexOf('.');
             if (dot < 0) break;
             String enclosing = target.name().substring(0, dot);
-            if (enclosing.equals(
-                    target.unit()
-                            .getPackageDeclaration()
-                            .orElseThrow(
-                                    () -> new Unsupported("Incomplete serialization declaration"))
-                            .getNameAsString())) break;
+            if (enclosing.equals(target.unit()
+                    .getPackageDeclaration()
+                    .orElseThrow(() -> new Unsupported("Incomplete serialization declaration"))
+                    .getNameAsString())) break;
             target = analyzer.index.source(enclosing);
         }
         throw new Unsupported("Unknown imperative helper: " + method);
@@ -1209,15 +1003,12 @@ final class ProgramLowerer {
         if (expression instanceof FieldAccessExpr field
                 && (field.getScope() instanceof ThisExpr
                         || field.getScope().toString().equals(valueName))
-                && fields.containsKey(field.getNameAsString()))
-            return fields.get(field.getNameAsString());
+                && fields.containsKey(field.getNameAsString())) return fields.get(field.getNameAsString());
         throw new Unsupported("Not a known imperative field: " + expression);
     }
 
     private static String physical(String shape) {
-        return shape.equals("UNSIGNED_BYTE")
-                ? "BYTE"
-                : shape.equals("UNSIGNED_SHORT") ? "SHORT" : shape;
+        return shape.equals("UNSIGNED_BYTE") ? "BYTE" : shape.equals("UNSIGNED_SHORT") ? "SHORT" : shape;
     }
 
     private static Expression expression(String code) {
@@ -1237,7 +1028,8 @@ final class ProgramLowerer {
     }
 
     private static String contents(BlockStmt block) {
-        return String.join("\n", block.getStatements().stream().map(Object::toString).toList());
+        return String.join(
+                "\n", block.getStatements().stream().map(Object::toString).toList());
     }
 
     private static String defaultValue(String type) {

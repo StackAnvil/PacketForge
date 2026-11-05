@@ -12,7 +12,6 @@ public record BlockPosition(int x, int y, int z) {
     }
 
     public static BlockPosition unpack(long value) {
-        return new BlockPosition(
-                (int) (value >> 38), (int) (value << 52 >> 52), (int) (value << 26 >> 38));
+        return new BlockPosition((int) (value >> 38), (int) (value << 52 >> 52), (int) (value << 26 >> 38));
     }
 }

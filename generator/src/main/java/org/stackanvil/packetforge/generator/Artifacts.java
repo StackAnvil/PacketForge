@@ -18,17 +18,15 @@ import java.util.zip.ZipFile;
 
 /** Fetches and decompiles artifacts without loading or running Minecraft classes. */
 final class Artifacts {
-    static final String MANIFEST =
-            "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+    static final String MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     static final String VINEFLOWER = "1.12.0";
 
     record Input(Path sources, int protocol, Map<String, String> provenance) {}
 
-    private final HttpClient http =
-            HttpClient.newBuilder()
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .connectTimeout(Duration.ofSeconds(30))
-                    .build();
+    private final HttpClient http = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(30))
+            .build();
 
     Input prepare(String version, Path cache) throws Exception {
         Path directory = cache.resolve(version);
@@ -44,8 +42,7 @@ final class Artifacts {
                     break;
                 }
             }
-            if (entry == null)
-                throw new IllegalArgumentException("Minecraft version not found: " + version);
+            if (entry == null) throw new IllegalArgumentException("Minecraft version not found: " + version);
             fetch(
                     URI.create(entry.get("url").getAsString()),
                     metadata,
@@ -60,8 +57,7 @@ final class Artifacts {
                 "SHA-1",
                 locked.get("sha1").getAsString());
         JsonObject meta = json(Files.readString(metadata));
-        if (!meta.get("id").getAsString().equals(version))
-            throw new IOException("Metadata version mismatch");
+        if (!meta.get("id").getAsString().equals(version)) throw new IOException("Metadata version mismatch");
         JsonObject download = meta.getAsJsonObject("downloads").getAsJsonObject("server");
         Path bundle = directory.resolve("server-bundle.jar");
         fetch(
@@ -72,21 +68,18 @@ final class Artifacts {
         Path jar = directory.resolve("minecraft.jar");
         Path brigadier = null;
         try (ZipFile zip = new ZipFile(bundle.toFile())) {
-            String[] entry =
-                    new String(
-                                    zip.getInputStream(zip.getEntry("META-INF/versions.list"))
-                                            .readAllBytes(),
-                                    java.nio.charset.StandardCharsets.UTF_8)
-                            .strip()
-                            .split("\\t");
+            String[] entry = new String(
+                            zip.getInputStream(zip.getEntry("META-INF/versions.list"))
+                                    .readAllBytes(),
+                            java.nio.charset.StandardCharsets.UTF_8)
+                    .strip()
+                    .split("\\t");
             extract(zip, "META-INF/versions/" + entry[2], jar, entry[0]);
             Path libraries = directory.resolve("libraries");
             Files.createDirectories(libraries);
-            String list =
-                    new String(
-                            zip.getInputStream(zip.getEntry("META-INF/libraries.list"))
-                                    .readAllBytes(),
-                            java.nio.charset.StandardCharsets.UTF_8);
+            String list = new String(
+                    zip.getInputStream(zip.getEntry("META-INF/libraries.list")).readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
             for (String line : list.lines().filter(s -> !s.isBlank()).toList()) {
                 String[] item = line.split("\\t");
                 Path library = libraries.resolve(item[2]).normalize();
@@ -97,12 +90,11 @@ final class Artifacts {
         }
         int protocol;
         try (ZipFile zip = new ZipFile(jar.toFile())) {
-            protocol =
-                    json(new String(
-                                    zip.getInputStream(zip.getEntry("version.json")).readAllBytes(),
-                                    java.nio.charset.StandardCharsets.UTF_8))
-                            .get("protocol_version")
-                            .getAsInt();
+            protocol = json(new String(
+                            zip.getInputStream(zip.getEntry("version.json")).readAllBytes(),
+                            java.nio.charset.StandardCharsets.UTF_8))
+                    .get("protocol_version")
+                    .getAsInt();
         }
         String jarHash = digest(jar, "SHA-256");
         Path sources = directory.resolve("sources");
@@ -112,13 +104,7 @@ final class Artifacts {
             deleteTree(sources);
             Files.createDirectories(sources);
             Path log = directory.resolve("vineflower.log");
-            System.out.println(
-                    "Decompiling Minecraft "
-                            + version
-                            + " with Vineflower "
-                            + VINEFLOWER
-                            + "; log: "
-                            + log);
+            System.out.println("Decompiling Minecraft " + version + " with Vineflower " + VINEFLOWER + "; log: " + log);
             decompile(jar, sources, log);
             if (!Files.exists(sources.resolve("net/minecraft/network/protocol/Packet.java")))
                 throw new IOException("Vineflower did not produce expected named sources");
@@ -130,19 +116,12 @@ final class Artifacts {
         String dependencyFingerprint = brigadierHash + " vineflower=" + VINEFLOWER;
         if (!Files.exists(dependencyMarker)
                 || !Files.readString(dependencyMarker).equals(dependencyFingerprint)
-                || !Files.exists(
-                        sources.resolve(
-                                "com/mojang/brigadier/arguments/StringArgumentType.java"))) {
+                || !Files.exists(sources.resolve("com/mojang/brigadier/arguments/StringArgumentType.java"))) {
             Path log = directory.resolve("brigadier-vineflower.log");
-            System.out.println(
-                    "Decompiling bundled Brigadier with Vineflower "
-                            + VINEFLOWER
-                            + "; log: "
-                            + log);
+            System.out.println("Decompiling bundled Brigadier with Vineflower " + VINEFLOWER + "; log: " + log);
             deleteTree(sources.resolve("com/mojang/brigadier"));
             decompile(brigadier, sources, log);
-            if (!Files.exists(
-                    sources.resolve("com/mojang/brigadier/arguments/StringArgumentType.java")))
+            if (!Files.exists(sources.resolve("com/mojang/brigadier/arguments/StringArgumentType.java")))
                 throw new IOException("Brigadier sources are missing");
             Files.writeString(dependencyMarker, dependencyFingerprint);
         }
@@ -168,22 +147,21 @@ final class Artifacts {
 
     private void decompile(Path jar, Path sources, Path log) throws Exception {
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        Process process =
-                new ProcessBuilder(
-                                java,
-                                "-Xmx3g",
-                                "-cp",
-                                System.getProperty("java.class.path"),
-                                "org.jetbrains.java.decompiler.main.decompiler.ConsoleDecompiler",
-                                "--folder",
-                                "--log-level=warn",
-                                "--thread-count=4",
-                                "--skip-extra-files=true",
-                                jar.toString(),
-                                sources.toString())
-                        .redirectErrorStream(true)
-                        .redirectOutput(log.toFile())
-                        .start();
+        Process process = new ProcessBuilder(
+                        java,
+                        "-Xmx3g",
+                        "-cp",
+                        System.getProperty("java.class.path"),
+                        "org.jetbrains.java.decompiler.main.decompiler.ConsoleDecompiler",
+                        "--folder",
+                        "--log-level=warn",
+                        "--thread-count=4",
+                        "--skip-extra-files=true",
+                        jar.toString(),
+                        sources.toString())
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile())
+                .start();
         if (process.waitFor() != 0) throw new IOException("Vineflower failed. Read " + log);
     }
 
@@ -193,17 +171,14 @@ final class Artifacts {
         try (var stream = zip.getInputStream(zip.getEntry(entry))) {
             Files.copy(stream, path, StandardCopyOption.REPLACE_EXISTING);
         }
-        if (!digest(path, "SHA-256").equals(sha256))
-            throw new IOException("Checksum mismatch: " + entry);
+        if (!digest(path, "SHA-256").equals(sha256)) throw new IOException("Checksum mismatch: " + entry);
     }
 
     private String get(URI uri) throws Exception {
-        var response =
-                http.send(
-                        HttpRequest.newBuilder(uri).timeout(Duration.ofMinutes(2)).GET().build(),
-                        HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200)
-            throw new IOException("HTTP " + response.statusCode() + ": " + uri);
+        var response = http.send(
+                HttpRequest.newBuilder(uri).timeout(Duration.ofMinutes(2)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) throw new IOException("HTTP " + response.statusCode() + ": " + uri);
         return response.body();
     }
 
@@ -211,17 +186,14 @@ final class Artifacts {
         if (Files.exists(file) && digest(file, algorithm).equals(hash)) return;
         Path temporary = Files.createTempFile(file.getParent(), "download-", ".tmp");
         try {
-            var response =
-                    http.send(
-                            HttpRequest.newBuilder(uri)
-                                    .timeout(Duration.ofMinutes(5))
-                                    .GET()
-                                    .build(),
-                            HttpResponse.BodyHandlers.ofFile(temporary));
-            if (response.statusCode() != 200)
-                throw new IOException("HTTP " + response.statusCode() + ": " + uri);
-            if (!digest(temporary, algorithm).equals(hash))
-                throw new IOException("Checksum mismatch: " + uri);
+            var response = http.send(
+                    HttpRequest.newBuilder(uri)
+                            .timeout(Duration.ofMinutes(5))
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofFile(temporary));
+            if (response.statusCode() != 200) throw new IOException("HTTP " + response.statusCode() + ": " + uri);
+            if (!digest(temporary, algorithm).equals(hash)) throw new IOException("Checksum mismatch: " + uri);
             Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
         } finally {
             Files.deleteIfExists(temporary);
@@ -241,8 +213,7 @@ final class Artifacts {
     static void deleteTree(Path path) throws IOException {
         if (!Files.exists(path)) return;
         try (var files = Files.walk(path)) {
-            for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList())
-                Files.delete(file);
+            for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(file);
         }
     }
 

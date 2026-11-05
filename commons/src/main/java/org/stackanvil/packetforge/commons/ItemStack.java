@@ -8,8 +8,7 @@ public record ItemStack(int count, int item, ComponentPatch components) {
 
     public ItemStack {
         Objects.requireNonNull(components);
-        if (count < 0 || item < 0)
-            throw new IllegalArgumentException("Negative item count or registry ID");
+        if (count < 0 || item < 0) throw new IllegalArgumentException("Negative item count or registry ID");
         if (count == 0 && (item != 0 || !components.equals(ComponentPatch.EMPTY)))
             throw new IllegalArgumentException("Empty stack has item data");
     }

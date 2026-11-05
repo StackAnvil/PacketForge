@@ -22,20 +22,15 @@ final class PolymorphicConstructorAnalyzer {
                 || call.getArguments().size() != 2
                 || !(call.getArgument(0) instanceof MethodReferenceExpr writer)
                 || !(call.getArgument(1) instanceof MethodReferenceExpr reader)
-                || !analyzer.index
-                        .resolve(writer.getScope().toString(), source)
-                        .equals(source.name())
-                || !analyzer.index
-                        .resolve(reader.getScope().toString(), source)
-                        .equals(source.name()))
+                || !analyzer.index.resolve(writer.getScope().toString(), source).equals(source.name())
+                || !analyzer.index.resolve(reader.getScope().toString(), source).equals(source.name()))
             throw new Unsupported("Not a polymorphic constructor codec");
         var read = method(source, reader.getIdentifier());
         var write = method(source, writer.getIdentifier());
         if (!read.isStatic()
                 || write.isStatic()
                 || read.getBody().isEmpty()
-                || write.getBody().isEmpty())
-            throw new Unsupported("Unknown polymorphic entry points");
+                || write.getBody().isEmpty()) throw new Unsupported("Unknown polymorphic entry points");
         var decoded = read.getBody().get().getStatements();
         var encoded = write.getBody().get().getStatements();
         if (decoded.size() < 3 || decoded.size() != encoded.size())
@@ -56,9 +51,7 @@ final class PolymorphicConstructorAnalyzer {
             throw new Unsupported("Polymorphic discriminator has no enum declaration");
         if (!(decoded.get(decoded.size() - 1) instanceof ReturnStmt returned))
             throw new Unsupported("Missing polymorphic constructor result");
-        Expression result =
-                returned.getExpression()
-                        .orElseThrow(() -> new Unsupported("Empty polymorphic result"));
+        Expression result = returned.getExpression().orElseThrow(() -> new Unsupported("Empty polymorphic result"));
         if (result instanceof CastExpr cast
                 && analyzer.index.resolve(cast.getTypeAsString(), source).equals(source.name()))
             result = cast.getExpression();
@@ -90,15 +83,10 @@ final class PolymorphicConstructorAnalyzer {
             var value = variable(decoded.get(i));
             String name = value.getNameAsString();
             header.add(name);
-            Wire wire =
-                    analyzer.read(
-                            value.getInitializer()
-                                    .orElseThrow(
-                                            () ->
-                                                    new Unsupported(
-                                                            "Uninitialized polymorphic header")),
-                            input,
-                            source);
+            Wire wire = analyzer.read(
+                    value.getInitializer().orElseThrow(() -> new Unsupported("Uninitialized polymorphic header")),
+                    input,
+                    source);
             Wire written = analyzer.write(invocation(encoded.get(i)), output, name, wire, source);
             if (!wire.type().equals(written.type()) || !wire.shape().equals(written.shape()))
                 throw new Unsupported("Polymorphic header wire mismatch");
@@ -117,23 +105,17 @@ final class PolymorphicConstructorAnalyzer {
                         .getBody()
                         .getStatement(0)
                         .toString()
-                        .equals(
-                                "this."
-                                        + constructorField.getNameAsString()
-                                        + " = "
-                                        + constructors.getFirst().getParameter(0).getNameAsString()
-                                        + ";"))
-            throw new Unsupported("Enum transforms its constructor function");
-        var baseConstructors =
-                source.declaration().getMembers().stream()
-                        .filter(
-                                m ->
-                                        m instanceof ConstructorDeclaration c
-                                                && c.getParameters().size() == header.size() + 1)
-                        .map(m -> (ConstructorDeclaration) m)
-                        .toList();
-        if (baseConstructors.size() != 1)
-            throw new Unsupported("Ambiguous polymorphic base constructor");
+                        .equals("this."
+                                + constructorField.getNameAsString()
+                                + " = "
+                                + constructors.getFirst().getParameter(0).getNameAsString()
+                                + ";")) throw new Unsupported("Enum transforms its constructor function");
+        var baseConstructors = source.declaration().getMembers().stream()
+                .filter(m -> m instanceof ConstructorDeclaration c
+                        && c.getParameters().size() == header.size() + 1)
+                .map(m -> (ConstructorDeclaration) m)
+                .toList();
+        if (baseConstructors.size() != 1) throw new Unsupported("Ambiguous polymorphic base constructor");
         var base = baseConstructors.getFirst();
         List<String> baseFields = new ArrayList<>(header);
         baseFields.add(typeField.getNameAsString());
@@ -143,13 +125,11 @@ final class PolymorphicConstructorAnalyzer {
             if (!base.getBody()
                     .getStatement(i)
                     .toString()
-                    .equals(
-                            "this."
-                                    + baseFields.get(i)
-                                    + " = "
-                                    + base.getParameter(i).getNameAsString()
-                                    + ";"))
-                throw new Unsupported("Polymorphic base constructor transforms its fields");
+                    .equals("this."
+                            + baseFields.get(i)
+                            + " = "
+                            + base.getParameter(i).getNameAsString()
+                            + ";")) throw new Unsupported("Polymorphic base constructor transforms its fields");
         List<DispatchCase> cases = new ArrayList<>();
         for (var constant : enumeration.getEntries()) {
             if (constant.getArguments().size() != 1
@@ -164,17 +144,11 @@ final class PolymorphicConstructorAnalyzer {
                             .resolve(subclass.getExtendedTypes().get(0).getNameWithScope(), subtype)
                             .equals(source.name()))
                 throw new Unsupported("Enum constructor does not extend its base value");
-            var candidates =
-                    subclass.getConstructors().stream()
-                            .filter(
-                                    c ->
-                                            c.getParameters().size() == header.size() + 1
-                                                    && c.getParameter(header.size())
-                                                            .getTypeAsString()
-                                                            .endsWith("ByteBuf"))
-                            .toList();
-            if (candidates.size() != 1)
-                throw new Unsupported("Ambiguous polymorphic buffer constructor");
+            var candidates = subclass.getConstructors().stream()
+                    .filter(c -> c.getParameters().size() == header.size() + 1
+                            && c.getParameter(header.size()).getTypeAsString().endsWith("ByteBuf"))
+                    .toList();
+            if (candidates.size() != 1) throw new Unsupported("Ambiguous polymorphic buffer constructor");
             var constructor = candidates.getFirst();
             var body = constructor.getBody().clone();
             if (body.isEmpty()
@@ -189,9 +163,10 @@ final class PolymorphicConstructorAnalyzer {
                     throw new Unsupported("Subclass transforms its shared header");
             if (!(parent.getArgument(header.size()) instanceof FieldAccessExpr tag)
                     || !tag.getNameAsString().equals(constant.getNameAsString())
-                    || !analyzer.index.resolve(tag.getScope().toString(), subtype).equals(enumName))
-                throw new Unsupported(
-                        "Subclass discriminator differs from its constructor table entry");
+                    || !analyzer.index
+                            .resolve(tag.getScope().toString(), subtype)
+                            .equals(enumName))
+                throw new Unsupported("Subclass discriminator differs from its constructor table entry");
             body.getStatements().remove(0);
             for (int i = 0; i < header.size(); i++) {
                 String parameter = constructor.getParameter(i).getNameAsString();
@@ -200,70 +175,57 @@ final class PolymorphicConstructorAnalyzer {
                     throw new Unsupported("Subclass payload depends on shared header values");
             }
             var payloadWriter = method(subtype, contents.getNameAsString());
-            if (payloadWriter.getBody().isEmpty())
-                throw new Unsupported("Subclass has no contents writer");
+            if (payloadWriter.getBody().isEmpty()) throw new Unsupported("Subclass has no contents writer");
             Wire payload;
             if (body.isEmpty() && payloadWriter.getBody().get().isEmpty())
-                payload =
-                        new Wire(
-                                "org.stackanvil.packetforge.commons.Unit",
-                                "WireCodecs.UNIT",
-                                "UNIT");
+                payload = new Wire("org.stackanvil.packetforge.commons.Unit", "WireCodecs.UNIT", "UNIT");
             else {
-                String modelKey = owner + "#contents",
-                        generated = analyzer.index.generated(owner) + "_Contents";
-                var lowered =
-                        new ProgramLowerer(analyzer, subtype, generated)
-                                .lowerBodies(
-                                        body,
-                                        payloadWriter.getBody().get(),
-                                        constructor.getParameter(header.size()).getNameAsString(),
-                                        payloadWriter.getParameter(0).getNameAsString(),
-                                        true);
-                Model model =
-                        new Model(
-                                modelKey,
-                                generated,
-                                lowered.fields(),
-                                List.of(),
-                                false,
-                                List.of(),
-                                lowered.program(),
-                                reference.toString(),
-                                "");
+                String modelKey = owner + "#contents", generated = analyzer.index.generated(owner) + "_Contents";
+                var lowered = new ProgramLowerer(analyzer, subtype, generated)
+                        .lowerBodies(
+                                body,
+                                payloadWriter.getBody().get(),
+                                constructor.getParameter(header.size()).getNameAsString(),
+                                payloadWriter.getParameter(0).getNameAsString(),
+                                true);
+                Model model = new Model(
+                        modelKey,
+                        generated,
+                        lowered.fields(),
+                        List.of(),
+                        false,
+                        List.of(),
+                        lowered.program(),
+                        reference.toString(),
+                        "");
                 analyzer.models.put(modelKey, model);
                 payload = modelWire(model);
             }
             cases.add(new DispatchCase(constant.getNameAsString(), payload, owner));
         }
         Wire key = analyzer.read(keyRead, input, source);
-        String name =
-                "dispatch_" + Integer.toUnsignedString((enumName + "#constructors").hashCode());
-        String entries =
-                String.join(
-                        ", ",
-                        cases.stream()
-                                .map(
-                                        c ->
-                                                "java.util.Map.entry("
-                                                        + key.type()
-                                                        + "."
-                                                        + c.key()
-                                                        + ", (PacketCodec<?>) "
-                                                        + c.value().codec()
-                                                        + ")")
-                                .toList());
-        Wire implementation =
-                new Wire(
-                        "org.stackanvil.packetforge.commons.Variant<" + key.type() + ">",
-                        "WireCodecs.dispatch("
-                                + key.codec()
-                                + ", java.util.Map.<"
+        String name = "dispatch_" + Integer.toUnsignedString((enumName + "#constructors").hashCode());
+        String entries = String.join(
+                ", ",
+                cases.stream()
+                        .map(c -> "java.util.Map.entry("
                                 + key.type()
-                                + ", PacketCodec<?>>ofEntries("
-                                + entries
-                                + "))",
-                        "dispatch:" + name);
+                                + "."
+                                + c.key()
+                                + ", (PacketCodec<?>) "
+                                + c.value().codec()
+                                + ")")
+                        .toList());
+        Wire implementation = new Wire(
+                "org.stackanvil.packetforge.commons.Variant<" + key.type() + ">",
+                "WireCodecs.dispatch("
+                        + key.codec()
+                        + ", java.util.Map.<"
+                        + key.type()
+                        + ", PacketCodec<?>>ofEntries("
+                        + entries
+                        + "))",
+                "dispatch:" + name);
         analyzer.dispatches.put(
                 name,
                 new Dispatch(
@@ -271,32 +233,23 @@ final class PolymorphicConstructorAnalyzer {
                         key,
                         List.copyOf(cases),
                         enumName,
-                        "enum-constructor:"
-                                + constructorField.getNameAsString()
-                                + ":"
-                                + contents.getNameAsString(),
+                        "enum-constructor:" + constructorField.getNameAsString() + ":" + contents.getNameAsString(),
                         implementation,
                         "",
                         ""));
-        Wire wire =
-                new Wire(
-                        implementation.type(),
-                        "org.stackanvil.packetforge.protocol.GeneratedWireCodecs." + name,
-                        implementation.shape());
+        Wire wire = new Wire(
+                implementation.type(),
+                "org.stackanvil.packetforge.protocol.GeneratedWireCodecs." + name,
+                implementation.shape());
         fields.add(new Field("contents", source.name(), wire, wire));
         return List.copyOf(fields);
     }
 
     private MethodDeclaration method(SourceIndex.Source source, String name) {
-        var methods =
-                source.declaration().getMethodsByName(name).stream()
-                        .filter(
-                                m ->
-                                        m.getParameters().size() == 1
-                                                && m.getParameter(0)
-                                                        .getTypeAsString()
-                                                        .endsWith("ByteBuf"))
-                        .toList();
+        var methods = source.declaration().getMethodsByName(name).stream()
+                .filter(m -> m.getParameters().size() == 1
+                        && m.getParameter(0).getTypeAsString().endsWith("ByteBuf"))
+                .toList();
         if (methods.size() != 1) throw new Unsupported("Ambiguous polymorphic method: " + name);
         return methods.getFirst();
     }
@@ -304,14 +257,12 @@ final class PolymorphicConstructorAnalyzer {
     private VariableDeclarator variable(Statement statement) {
         if (!(statement instanceof ExpressionStmt e)
                 || !(e.getExpression() instanceof VariableDeclarationExpr variables)
-                || variables.getVariables().size() != 1)
-            throw new Unsupported("Expected a polymorphic header local");
+                || variables.getVariables().size() != 1) throw new Unsupported("Expected a polymorphic header local");
         return variables.getVariable(0);
     }
 
     private MethodCallExpr invocation(Statement statement) {
-        if (!(statement instanceof ExpressionStmt e)
-                || !(e.getExpression() instanceof MethodCallExpr call))
+        if (!(statement instanceof ExpressionStmt e) || !(e.getExpression() instanceof MethodCallExpr call))
             throw new Unsupported("Expected a polymorphic writer call");
         return call;
     }

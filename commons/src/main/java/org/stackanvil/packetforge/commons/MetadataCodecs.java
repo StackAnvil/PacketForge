@@ -8,8 +8,7 @@ import java.util.List;
 public final class MetadataCodecs {
     private MetadataCodecs() {}
 
-    public static PacketCodec<List<MetadataEntry>> entries(
-            PacketCodec<Variant<Integer>> serializers) {
+    public static PacketCodec<List<MetadataEntry>> entries(PacketCodec<Variant<Integer>> serializers) {
         return WireCodecs.of(
                 input -> {
                     List<MetadataEntry> values = new ArrayList<>();
@@ -25,8 +24,7 @@ public final class MetadataCodecs {
                     var indices = new HashSet<Integer>();
                     for (var entry : values) {
                         if (!indices.add(entry.index()))
-                            throw new IllegalArgumentException(
-                                    "Repeated metadata index: " + entry.index());
+                            throw new IllegalArgumentException("Repeated metadata index: " + entry.index());
                         output.writeByte(entry.index());
                         serializers.encode(output, entry.value());
                     }

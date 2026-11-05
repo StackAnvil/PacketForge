@@ -28,8 +28,7 @@ public final class PacketRegistry {
         }
     }
 
-    public record Entry<T extends Packet>(
-            Key key, String name, Class<T> type, PacketCodec<T> codec) {
+    public record Entry<T extends Packet>(Key key, String name, Class<T> type, PacketCodec<T> codec) {
         public Entry {
             Objects.requireNonNull(key);
             Objects.requireNonNull(name);
@@ -63,8 +62,7 @@ public final class PacketRegistry {
             int id = WireCodecs.VAR_INT.decode(body);
             Entry<?> entry = require(new Key(state, flow, id));
             Packet packet = entry.codec().decode(body);
-            if (body.isReadable())
-                throw new IllegalArgumentException("Trailing bytes for " + entry.name());
+            if (body.isReadable()) throw new IllegalArgumentException("Trailing bytes for " + entry.name());
             return packet;
         } catch (RuntimeException e) {
             body.readerIndex(start);
@@ -74,8 +72,7 @@ public final class PacketRegistry {
 
     public void encode(Key key, Packet packet, ByteBuf output) {
         Entry<?> entry = require(key);
-        if (!entry.type().isInstance(packet))
-            throw new IllegalArgumentException("Wrong packet type for " + key);
+        if (!entry.type().isInstance(packet)) throw new IllegalArgumentException("Wrong packet type for " + key);
         int start = output.writerIndex();
         try {
             WireCodecs.VAR_INT.encode(output, key.id());

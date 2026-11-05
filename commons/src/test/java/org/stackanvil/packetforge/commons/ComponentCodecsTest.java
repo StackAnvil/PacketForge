@@ -22,9 +22,7 @@ class ComponentCodecsTest {
                 codec.encode(buffer, value);
                 byte[] actual = new byte[buffer.readableBytes()];
                 buffer.getBytes(0, actual);
-                assertArrayEquals(
-                        delimited ? new byte[] {1, 1, 0, 1, 42, 1} : new byte[] {1, 1, 0, 42, 1},
-                        actual);
+                assertArrayEquals(delimited ? new byte[] {1, 1, 0, 1, 42, 1} : new byte[] {1, 1, 0, 42, 1}, actual);
                 assertEquals(value, codec.decode(buffer));
                 assertFalse(buffer.isReadable());
             } finally {
@@ -36,13 +34,12 @@ class ComponentCodecsTest {
     @Test
     void rejectsDuplicateUnknownAndConflictingChangesAndBadDelimiters() {
         var codec = ComponentCodecs.patch(SCHEMAS, false);
-        for (byte[] body :
-                List.of(
-                        new byte[] {2, 0, 0, 1, 0, 2},
-                        new byte[] {0, 2, 1, 1},
-                        new byte[] {1, 0, 3},
-                        new byte[] {1, 1, 0, 42, 0},
-                        new byte[] {4, 0})) {
+        for (byte[] body : List.of(
+                new byte[] {2, 0, 0, 1, 0, 2},
+                new byte[] {0, 2, 1, 1},
+                new byte[] {1, 0, 3},
+                new byte[] {1, 1, 0, 42, 0},
+                new byte[] {4, 0})) {
             var input = Unpooled.wrappedBuffer(body);
             try {
                 assertThrows(IllegalArgumentException.class, () -> codec.decode(input));
@@ -73,8 +70,7 @@ class ComponentCodecsTest {
             assertEquals(ItemStack.EMPTY, optional.decode(buffer));
             assertEquals(item, required.decode(buffer));
             assertFalse(buffer.isReadable());
-            assertThrows(
-                    IllegalArgumentException.class, () -> required.encode(buffer, ItemStack.EMPTY));
+            assertThrows(IllegalArgumentException.class, () -> required.encode(buffer, ItemStack.EMPTY));
             buffer.writeByte(0);
             assertThrows(IllegalArgumentException.class, () -> required.decode(buffer));
         } finally {
@@ -84,11 +80,10 @@ class ComponentCodecsTest {
 
     @Test
     void holderSetsPreserveTagsAndDirectIds() {
-        for (HolderSet value :
-                List.of(
-                        new HolderSet.Tag("minecraft:logs"),
-                        new HolderSet.Direct(List.of()),
-                        new HolderSet.Direct(List.of(0, 128)))) {
+        for (HolderSet value : List.of(
+                new HolderSet.Tag("minecraft:logs"),
+                new HolderSet.Direct(List.of()),
+                new HolderSet.Direct(List.of(0, 128)))) {
             var buffer = Unpooled.buffer();
             try {
                 WireCodecs.HOLDER_SET.encode(buffer, value);

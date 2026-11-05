@@ -11,18 +11,15 @@ class CommandTreeCodecsTest {
     @Test
     void nodesRetainFlagsReferencesAndTypedPayloads() {
         var codec = CommandTreeCodecs.node(Map.of(123, WireCodecs.INT));
-        for (var node :
-                List.of(
-                        new CommandNode(0, new int[] {1, 2}, 0, null),
-                        new CommandNode(13, new int[0], 123, new CommandNode.Literal("café")),
-                        new CommandNode(
-                                50,
-                                new int[] {0},
-                                0,
-                                new CommandNode.Argument(
-                                        "argument",
-                                        new Variant<>(123, Integer.MIN_VALUE),
-                                        "minecraft:ask_server")))) {
+        for (var node : List.of(
+                new CommandNode(0, new int[] {1, 2}, 0, null),
+                new CommandNode(13, new int[0], 123, new CommandNode.Literal("café")),
+                new CommandNode(
+                        50,
+                        new int[] {0},
+                        0,
+                        new CommandNode.Argument(
+                                "argument", new Variant<>(123, Integer.MIN_VALUE), "minecraft:ask_server")))) {
             var buffer = Unpooled.buffer();
             try {
                 codec.encode(buffer, node);
@@ -52,8 +49,7 @@ class CommandTreeCodecsTest {
             assertNull(node.stub());
             assertEquals(99, input.readUnsignedByte());
             codec.encode(output, node);
-            assertArrayEquals(
-                    new byte[] {18, 0}, new byte[] {output.readByte(), output.readByte()});
+            assertArrayEquals(new byte[] {18, 0}, new byte[] {output.readByte(), output.readByte()});
             assertFalse(output.isReadable());
         } finally {
             input.release();
@@ -64,24 +60,17 @@ class CommandTreeCodecsTest {
     @Test
     void validatesChildAndRedirectGraphsSeparatelyAndIgnoresReferencesOutsideTheNodeSet() {
         CommandTreeCodecs.validate(
-                List.of(
-                        new CommandNode(0, new int[] {1, 1}, 0, null),
-                        new CommandNode(8, new int[] {-1, 9}, 0, null)));
+                List.of(new CommandNode(0, new int[] {1, 1}, 0, null), new CommandNode(8, new int[] {-1, 9}, 0, null)));
         assertThrows(
                 IllegalStateException.class,
-                () ->
-                        CommandTreeCodecs.validate(
-                                List.of(new CommandNode(0, new int[] {0}, 0, null))));
+                () -> CommandTreeCodecs.validate(List.of(new CommandNode(0, new int[] {0}, 0, null))));
         assertThrows(
                 IllegalStateException.class,
                 () -> CommandTreeCodecs.validate(List.of(new CommandNode(8, new int[0], 0, null))));
         assertThrows(
                 IllegalStateException.class,
-                () ->
-                        CommandTreeCodecs.validate(
-                                List.of(
-                                        new CommandNode(0, new int[] {1}, 0, null),
-                                        new CommandNode(0, new int[] {0}, 0, null))));
+                () -> CommandTreeCodecs.validate(List.of(
+                        new CommandNode(0, new int[] {1}, 0, null), new CommandNode(0, new int[] {0}, 0, null))));
         CommandTreeCodecs.validate(List.of());
     }
 }

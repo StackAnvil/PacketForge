@@ -36,30 +36,24 @@ class WireCodecsTest {
     void rejectsOversizedPayloadsAndMatchesVanillaUtf8Replacement() {
         withBuffer(
                 new byte[] {-128, -128, -128, -128, -128, 0},
-                b ->
-                        assertThrows(
-                                IllegalArgumentException.class,
-                                () -> WireCodecs.VAR_INT.decode(b)));
+                b -> assertThrows(IllegalArgumentException.class, () -> WireCodecs.VAR_INT.decode(b)));
         withBuffer(
                 new byte[] {2, (byte) 0xc0, (byte) 0x80},
                 b -> assertEquals("\ufffd\ufffd", WireCodecs.STRING.decode(b)));
         withBuffer(
                 new byte[] {127},
-                b ->
-                        assertThrows(
-                                IllegalArgumentException.class,
-                                () -> WireCodecs.byteArray(4).decode(b)));
+                b -> assertThrows(
+                        IllegalArgumentException.class,
+                        () -> WireCodecs.byteArray(4).decode(b)));
         withBuffer(
                 new byte[] {1, 65},
-                b ->
-                        assertThrows(
-                                IllegalArgumentException.class,
-                                () -> WireCodecs.string(0).decode(b)));
+                b -> assertThrows(
+                        IllegalArgumentException.class,
+                        () -> WireCodecs.string(0).decode(b)));
         ByteBuf buffer = Unpooled.buffer();
         try {
             assertThrows(
-                    IllegalArgumentException.class,
-                    () -> WireCodecs.string(1).encode(buffer, "xx"));
+                    IllegalArgumentException.class, () -> WireCodecs.string(1).encode(buffer, "xx"));
         } finally {
             buffer.release();
         }

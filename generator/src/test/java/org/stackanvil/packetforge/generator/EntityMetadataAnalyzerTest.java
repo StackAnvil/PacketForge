@@ -8,34 +8,29 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class EntityMetadataAnalyzerTest {
-    @TempDir Path sources;
+    @TempDir
+    Path sources;
 
     private void source(String name, String body) throws Exception {
         Path path = sources.resolve(name.replace('.', '/') + ".java");
         Files.createDirectories(path.getParent());
-        Files.writeString(
-                path, "package " + name.substring(0, name.lastIndexOf('.')) + ";\n" + body);
+        Files.writeString(path, "package " + name.substring(0, name.lastIndexOf('.')) + ";\n" + body);
     }
 
     private Analyzer fixture(String firstCodec) throws Exception {
-        source(
-                "net.minecraft.network.syncher.EntityDataSerializer",
-                """
+        source("net.minecraft.network.syncher.EntityDataSerializer", """
             interface EntityDataSerializer {
                 static Object forValueType(Object codec) { return () -> codec; }
             }
             """);
-        source(
-                "net.minecraft.network.syncher.EntityDataSerializers",
-                """
+        source("net.minecraft.network.syncher.EntityDataSerializers", """
             import net.minecraft.network.codec.ByteBufCodecs;
             class EntityDataSerializers {
                 static Object FIRST = EntityDataSerializer.forValueType(%s);
                 static Object SECOND = EntityDataSerializer.forValueType(ByteBufCodecs.BOOL);
                 static { registerSerializer(SECOND); registerSerializer(FIRST); }
             }
-            """
-                        .formatted(firstCodec));
+            """.formatted(firstCodec));
         return new Analyzer(sources);
     }
 
@@ -58,8 +53,7 @@ class EntityMetadataAnalyzerTest {
     @Test
     void missingSerializerKeepsItsWireIdAndPreventsAPartialTable() throws Exception {
         Analyzer analyzer = fixture("Unknown.CODEC");
-        assertThrows(
-                SourceIndex.Unsupported.class, () -> new EntityMetadataAnalyzer(analyzer).table());
+        assertThrows(SourceIndex.Unsupported.class, () -> new EntityMetadataAnalyzer(analyzer).table());
         assertTrue(analyzer.dispatches.isEmpty());
         var missing = analyzer.registryGaps.get("ENTITY_DATA_SERIALIZERS");
         assertEquals(1, missing.size());
@@ -70,12 +64,9 @@ class EntityMetadataAnalyzerTest {
     @Test
     void rejectsExtraRegistrationOperations() throws Exception {
         Analyzer analyzer = fixture("ByteBufCodecs.VAR_INT");
-        source(
-                "net.minecraft.network.syncher.EntityDataSerializers",
-                """
+        source("net.minecraft.network.syncher.EntityDataSerializers", """
             class EntityDataSerializers { static { for (int i = 0; i < 2; i++) registerSerializer(FIRST); } }
             """);
-        assertThrows(
-                SourceIndex.Unsupported.class, () -> new EntityMetadataAnalyzer(analyzer).table());
+        assertThrows(SourceIndex.Unsupported.class, () -> new EntityMetadataAnalyzer(analyzer).table());
     }
 }

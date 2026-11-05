@@ -18,11 +18,10 @@ final class ContextModifierAnalyzer {
 
     ContextRule lower(Expression modifier, SourceIndex.Source source, Model root) {
         if (modifier instanceof NameExpr name) {
-            Expression initializer =
-                    source.declaration()
-                            .getFieldByName(name.getNameAsString())
-                            .flatMap(f -> f.getVariable(0).getInitializer())
-                            .orElseThrow(() -> new Unsupported("Missing codec modifier field"));
+            Expression initializer = source.declaration()
+                    .getFieldByName(name.getNameAsString())
+                    .flatMap(f -> f.getVariable(0).getInitializer())
+                    .orElseThrow(() -> new Unsupported("Missing codec modifier field"));
             if (!(initializer instanceof LambdaExpr lambda)
                     || lambda.getParameters().size() != 2
                     || !(lambda.getBody() instanceof ExpressionStmt expression)
@@ -47,28 +46,24 @@ final class ContextModifierAnalyzer {
             if (!negativeFlag(writeGate.getCondition(), context).equals(predicate))
                 throw new Unsupported("Codec modifier read and write gates differ");
             String rejection = thrownMessage(readGate.getThenStmt(), "SkipPacketDecoderException");
-            if (!rejection.equals(
-                    thrownMessage(writeGate.getThenStmt(), "SkipPacketEncoderException")))
+            if (!rejection.equals(thrownMessage(writeGate.getThenStmt(), "SkipPacketEncoderException")))
                 throw new Unsupported("Codec modifier rejection messages differ");
             Statement accepted = one(readGate.getElseStmt().get());
             if (!(accepted instanceof ReturnStmt returned)
                     || !unwrapped(returned.getExpression().orElseThrow())
                             .toString()
-                            .equals(
-                                    original
-                                            + ".decode("
-                                            + reader.getParameter(0).getNameAsString()
-                                            + ")")
+                            .equals(original
+                                    + ".decode("
+                                    + reader.getParameter(0).getNameAsString()
+                                    + ")")
                     || !write.getStatement(1)
                             .toString()
-                            .equals(
-                                    original
-                                            + ".encode("
-                                            + writer.getParameter(0).getNameAsString()
-                                            + ", "
-                                            + writer.getParameter(1).getNameAsString()
-                                            + ");"))
-                throw new Unsupported("Codec gate changes the accepted wire layout");
+                            .equals(original
+                                    + ".encode("
+                                    + writer.getParameter(0).getNameAsString()
+                                    + ", "
+                                    + writer.getParameter(1).getNameAsString()
+                                    + ");")) throw new Unsupported("Codec gate changes the accepted wire layout");
             declaredFlag(source, predicate);
             return new ContextRule(predicate, root.originalName(), "", rejection);
         }
@@ -83,8 +78,7 @@ final class ContextModifierAnalyzer {
             if (helper.size() != 1
                     || !helper.getFirst().isStatic()
                     || helper.getFirst().getParameters().size() != 1
-                    || helper.getFirst().getBody().isEmpty())
-                throw new Unsupported("Unknown codec selection helper");
+                    || helper.getFirst().getBody().isEmpty()) throw new Unsupported("Unknown codec selection helper");
             var returned = helper.getFirst().getBody().get();
             if (returned.getStatements().size() != 1
                     || !(returned.getStatement(0) instanceof ReturnStmt result)
@@ -105,13 +99,13 @@ final class ContextModifierAnalyzer {
                 Expression operation;
                 if (name.equals("decode") && block.getStatement(0) instanceof ReturnStmt decoded)
                     operation = unwrapped(decoded.getExpression().orElseThrow());
-                else if (name.equals("encode")
-                        && block.getStatement(0) instanceof ExpressionStmt encoded)
+                else if (name.equals("encode") && block.getStatement(0) instanceof ExpressionStmt encoded)
                     operation = encoded.getExpression();
                 else throw new Unsupported("Codec selector does not forward its operation");
                 if (!(operation instanceof MethodCallExpr delegated)
                         || !delegated.getNameAsString().equals(name)
-                        || delegated.getArguments().size() != method.getParameters().size()
+                        || delegated.getArguments().size()
+                                != method.getParameters().size()
                         || delegated.getScope().isEmpty())
                     throw new Unsupported("Codec selection helper transforms its payload");
                 for (int i = 0; i < delegated.getArguments().size(); i++)
@@ -136,7 +130,10 @@ final class ContextModifierAnalyzer {
                     || allowed.fields().size() != fallback.fields().size())
                 throw new Unsupported("Context selector does not preserve its packet layout");
             for (int i = 0; i < allowed.fields().size(); i++)
-                if (!allowed.fields().get(i).name().equals(fallback.fields().get(i).name())
+                if (!allowed.fields()
+                                .get(i)
+                                .name()
+                                .equals(fallback.fields().get(i).name())
                         || !allowed.fields()
                                 .get(i)
                                 .read()
@@ -150,17 +147,13 @@ final class ContextModifierAnalyzer {
     }
 
     private void declaredFlag(SourceIndex.Source source, String predicate) {
-        var contexts =
-                source.declaration().getMembers().stream()
-                        .filter(
-                                m ->
-                                        m instanceof ClassOrInterfaceDeclaration c
-                                                && c.getNameAsString().equals("Context")
-                                                && c.isInterface())
-                        .map(m -> (ClassOrInterfaceDeclaration) m)
-                        .toList();
-        if (contexts.size() != 1)
-            throw new Unsupported("Codec context has no declared flag interface");
+        var contexts = source.declaration().getMembers().stream()
+                .filter(m -> m instanceof ClassOrInterfaceDeclaration c
+                        && c.getNameAsString().equals("Context")
+                        && c.isInterface())
+                .map(m -> (ClassOrInterfaceDeclaration) m)
+                .toList();
+        if (contexts.size() != 1) throw new Unsupported("Codec context has no declared flag interface");
         var methods = contexts.getFirst().getMethodsByName(predicate);
         if (methods.size() != 1
                 || !methods.getFirst().getTypeAsString().equals("boolean")
@@ -172,27 +165,21 @@ final class ContextModifierAnalyzer {
     private Model selected(Expression expression, SourceIndex.Source source) {
         if (!(expression instanceof FieldAccessExpr field))
             throw new Unsupported("Selected packet codec is not a field");
-        return analyzer.model(
-                analyzer.index.resolve(field.getScope().toString(), source),
-                field.getNameAsString());
+        return analyzer.model(analyzer.index.resolve(field.getScope().toString(), source), field.getNameAsString());
     }
 
     private MethodDeclaration method(List<BodyDeclaration<?>> members, String name) {
-        var methods =
-                members.stream()
-                        .filter(
-                                m ->
-                                        m instanceof MethodDeclaration d
-                                                && d.getNameAsString().equals(name))
-                        .map(m -> (MethodDeclaration) m)
-                        .toList();
+        var methods = members.stream()
+                .filter(m ->
+                        m instanceof MethodDeclaration d && d.getNameAsString().equals(name))
+                .map(m -> (MethodDeclaration) m)
+                .toList();
         if (methods.size() != 1) throw new Unsupported("Ambiguous modifier method: " + name);
         return methods.getFirst();
     }
 
     private String negativeFlag(Expression expression, String context) {
-        if (!(expression instanceof UnaryExpr unary)
-                || unary.getOperator() != UnaryExpr.Operator.LOGICAL_COMPLEMENT)
+        if (!(expression instanceof UnaryExpr unary) || unary.getOperator() != UnaryExpr.Operator.LOGICAL_COMPLEMENT)
             throw new Unsupported("Codec gate is not a negative boolean flag");
         return flag(unary.getExpression(), context);
     }
@@ -213,10 +200,9 @@ final class ContextModifierAnalyzer {
 
     private Expression unwrapped(Expression expression) {
         while (expression instanceof CastExpr || expression instanceof EnclosedExpr)
-            expression =
-                    expression instanceof CastExpr cast
-                            ? cast.getExpression()
-                            : expression.asEnclosedExpr().getInner();
+            expression = expression instanceof CastExpr cast
+                    ? cast.getExpression()
+                    : expression.asEnclosedExpr().getInner();
         return expression;
     }
 

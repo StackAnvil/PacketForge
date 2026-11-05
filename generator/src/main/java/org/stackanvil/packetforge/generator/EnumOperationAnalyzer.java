@@ -22,24 +22,15 @@ final class EnumOperationAnalyzer {
                 || !(call.getArgument(0) instanceof MethodReferenceExpr writer)
                 || !(call.getArgument(1) instanceof MethodReferenceExpr reader)
                 || !reader.getIdentifier().equals("new")
-                || !analyzer.index
-                        .resolve(reader.getScope().toString(), source)
-                        .equals(source.name())
-                || !analyzer.index
-                        .resolve(writer.getScope().toString(), source)
-                        .equals(source.name()))
+                || !analyzer.index.resolve(reader.getScope().toString(), source).equals(source.name())
+                || !analyzer.index.resolve(writer.getScope().toString(), source).equals(source.name()))
             throw new Unsupported("Not an enum operation codec");
-        var constructors =
-                source.declaration().getMembers().stream()
-                        .filter(
-                                m ->
-                                        m instanceof ConstructorDeclaration c
-                                                && c.getParameters().size() == 1
-                                                && c.getParameter(0)
-                                                        .getTypeAsString()
-                                                        .endsWith("ByteBuf"))
-                        .map(m -> (ConstructorDeclaration) m)
-                        .toList();
+        var constructors = source.declaration().getMembers().stream()
+                .filter(m -> m instanceof ConstructorDeclaration c
+                        && c.getParameters().size() == 1
+                        && c.getParameter(0).getTypeAsString().endsWith("ByteBuf"))
+                .map(m -> (ConstructorDeclaration) m)
+                .toList();
         var writers = source.declaration().getMethodsByName(writer.getIdentifier());
         if (constructors.size() != 1
                 || writers.size() != 1
@@ -61,9 +52,7 @@ final class EnumOperationAnalyzer {
                 || variables.getVariables().size() != 1)
             throw new Unsupported("Unknown enum operation reader structure");
         var variable = variables.getVariable(0);
-        var keyRead =
-                variable.getInitializer()
-                        .orElseThrow(() -> new Unsupported("Missing operation discriminator"));
+        var keyRead = variable.getInitializer().orElseThrow(() -> new Unsupported("Missing operation discriminator"));
         if (!(keyRead instanceof MethodCallExpr keyCall)
                 || !keyCall.getNameAsString().equals("readEnum")
                 || !keyCall.getScope().map(Object::toString).orElse("").equals(input)
@@ -109,16 +98,11 @@ final class EnumOperationAnalyzer {
                         .getBody()
                         .getStatement(0)
                         .toString()
-                        .equals(
-                                "this."
-                                        + decoder.getNameAsString()
-                                        + " = "
-                                        + enumConstructors
-                                                .getFirst()
-                                                .getParameter(0)
-                                                .getNameAsString()
-                                        + ";"))
-            throw new Unsupported("Enum transforms its decoder constructor argument");
+                        .equals("this."
+                                + decoder.getNameAsString()
+                                + " = "
+                                + enumConstructors.getFirst().getParameter(0).getNameAsString()
+                                + ";")) throw new Unsupported("Enum transforms its decoder constructor argument");
         List<Field> fields = new ArrayList<>();
         for (int i = 0; i < prefix; i++) {
             if (!(statements.get(i) instanceof ExpressionStmt entry)
@@ -134,16 +118,11 @@ final class EnumOperationAnalyzer {
             if (!read.type().equals(written.type()) || !read.shape().equals(written.shape()))
                 throw new Unsupported("Operation prefix wire mismatch");
             fields.add(
-                    new Field(
-                            f.getNameAsString(),
-                            Analyzer.declaredType(f.getNameAsString(), source),
-                            read,
-                            written));
+                    new Field(f.getNameAsString(), Analyzer.declaredType(f.getNameAsString(), source), read, written));
         }
         List<DispatchCase> cases = new ArrayList<>();
         for (var constant : enumeration.getEntries()) {
-            if (constant.getArguments().size() != 1)
-                throw new Unsupported("Unknown operation decoder arguments");
+            if (constant.getArguments().size() != 1) throw new Unsupported("Unknown operation decoder arguments");
             Expression argument = constant.getArgument(0);
             Wire payload;
             if (argument instanceof MethodReferenceExpr reference
@@ -157,94 +136,69 @@ final class EnumOperationAnalyzer {
                         constant.getNameAsString(),
                         operation);
                 var model = analyzer.model(owner);
-                payload =
-                        new Wire(
-                                model.generatedName(),
-                                model.generatedName() + ".CODEC",
-                                "model:" + owner);
+                payload = new Wire(model.generatedName(), model.generatedName() + ".CODEC", "model:" + owner);
                 if (!payloadWrite.getNameAsString().equals("write"))
                     throw new Unsupported("Operation model has a different writer");
             } else if (argument instanceof LambdaExpr lambda
                     && lambda.getParameters().size() == 1
                     && lambda.getBody() instanceof ExpressionStmt expression
                     && expression.getExpression() instanceof FieldAccessExpr singleton) {
-                var owner =
-                        analyzer.index.source(
-                                analyzer.index.resolve(
-                                        singleton.getScope().toString(), enumSource));
-                Expression value =
-                        owner.declaration()
-                                .getFieldByName(singleton.getNameAsString())
-                                .orElseThrow(() -> new Unsupported("Missing operation singleton"))
-                                .getVariable(0)
-                                .getInitializer()
-                                .orElseThrow();
+                var owner = analyzer.index.source(
+                        analyzer.index.resolve(singleton.getScope().toString(), enumSource));
+                Expression value = owner.declaration()
+                        .getFieldByName(singleton.getNameAsString())
+                        .orElseThrow(() -> new Unsupported("Missing operation singleton"))
+                        .getVariable(0)
+                        .getInitializer()
+                        .orElseThrow();
                 if (!(value instanceof ObjectCreationExpr anonymous)
                         || anonymous.getAnonymousClassBody().isEmpty())
                     throw new Unsupported("Operation singleton is not an anonymous value");
                 var members = anonymous.getAnonymousClassBody().get();
-                var getters =
-                        members.stream()
-                                .filter(
-                                        m ->
-                                                m instanceof MethodDeclaration d
-                                                        && d.getNameAsString()
-                                                                .equals(getter.getNameAsString()))
-                                .map(m -> (MethodDeclaration) m)
-                                .toList();
+                var getters = members.stream()
+                        .filter(m -> m instanceof MethodDeclaration d
+                                && d.getNameAsString().equals(getter.getNameAsString()))
+                        .map(m -> (MethodDeclaration) m)
+                        .toList();
                 if (getters.size() != 1) throw new Unsupported("Missing singleton operation type");
                 verifyReturn(getters.getFirst(), enumName, constant.getNameAsString(), owner);
-                var methods =
-                        members.stream()
-                                .filter(
-                                        m ->
-                                                m instanceof MethodDeclaration d
-                                                        && d.getNameAsString()
-                                                                .equals(
-                                                                        payloadWrite
-                                                                                .getNameAsString()))
-                                .map(m -> (MethodDeclaration) m)
-                                .toList();
+                var methods = members.stream()
+                        .filter(m -> m instanceof MethodDeclaration d
+                                && d.getNameAsString().equals(payloadWrite.getNameAsString()))
+                        .map(m -> (MethodDeclaration) m)
+                        .toList();
                 if (methods.size() != 1
                         || methods.getFirst().getParameters().size() != 1
                         || methods.getFirst().getBody().isEmpty()
                         || !methods.getFirst().getBody().get().isEmpty())
                     throw new Unsupported("Singleton operation has a payload");
-                payload =
-                        new Wire(
-                                "org.stackanvil.packetforge.commons.Unit",
-                                "WireCodecs.UNIT",
-                                "UNIT");
+                payload = new Wire("org.stackanvil.packetforge.commons.Unit", "WireCodecs.UNIT", "UNIT");
             } else throw new Unsupported("Unknown enum operation constructor decoder");
             cases.add(new DispatchCase(constant.getNameAsString(), payload));
         }
         Wire key = analyzer.read(keyRead, input, source);
         String name = "dispatch_" + Integer.toUnsignedString((enumName + "#operations").hashCode());
-        String entries =
-                String.join(
-                        ", ",
-                        cases.stream()
-                                .map(
-                                        c ->
-                                                "java.util.Map.entry("
-                                                        + key.type()
-                                                        + "."
-                                                        + c.key()
-                                                        + ", (PacketCodec<?>) "
-                                                        + c.value().codec()
-                                                        + ")")
-                                .toList());
-        Wire implementation =
-                new Wire(
-                        "org.stackanvil.packetforge.commons.Variant<" + key.type() + ">",
-                        "WireCodecs.dispatch("
-                                + key.codec()
-                                + ", java.util.Map.<"
+        String entries = String.join(
+                ", ",
+                cases.stream()
+                        .map(c -> "java.util.Map.entry("
                                 + key.type()
-                                + ", PacketCodec<?>>ofEntries("
-                                + entries
-                                + "))",
-                        "dispatch:" + name);
+                                + "."
+                                + c.key()
+                                + ", (PacketCodec<?>) "
+                                + c.value().codec()
+                                + ")")
+                        .toList());
+        Wire implementation = new Wire(
+                "org.stackanvil.packetforge.commons.Variant<" + key.type() + ">",
+                "WireCodecs.dispatch("
+                        + key.codec()
+                        + ", java.util.Map.<"
+                        + key.type()
+                        + ", PacketCodec<?>>ofEntries("
+                        + entries
+                        + "))",
+                "dispatch:" + name);
         analyzer.dispatches.put(
                 name,
                 new Dispatch(
@@ -252,18 +206,14 @@ final class EnumOperationAnalyzer {
                         key,
                         List.copyOf(cases),
                         enumName,
-                        "enum-decoder:"
-                                + decoder.getNameAsString()
-                                + ":"
-                                + payloadWrite.getNameAsString(),
+                        "enum-decoder:" + decoder.getNameAsString() + ":" + payloadWrite.getNameAsString(),
                         implementation,
                         "",
                         ""));
-        Wire wire =
-                new Wire(
-                        implementation.type(),
-                        "org.stackanvil.packetforge.protocol.GeneratedWireCodecs." + name,
-                        implementation.shape());
+        Wire wire = new Wire(
+                implementation.type(),
+                "org.stackanvil.packetforge.protocol.GeneratedWireCodecs." + name,
+                implementation.shape());
         fields.add(new Field(field, Analyzer.declaredType(field, source), wire, wire));
         return List.copyOf(fields);
     }
@@ -279,8 +229,7 @@ final class EnumOperationAnalyzer {
         verifyReturn(methods.getFirst(), enumName, constant, source);
     }
 
-    private void verifyReturn(
-            MethodDeclaration method, String enumName, String constant, SourceIndex.Source source) {
+    private void verifyReturn(MethodDeclaration method, String enumName, String constant, SourceIndex.Source source) {
         if (!method.getParameters().isEmpty()
                 || method.getBody().isEmpty()
                 || method.getBody().get().getStatements().size() != 1

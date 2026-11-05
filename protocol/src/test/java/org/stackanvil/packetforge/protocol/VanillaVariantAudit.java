@@ -55,17 +55,8 @@ final class VanillaVariantAudit {
             Method decode,
             Method encode)
             throws Exception {
-        var audit =
-                new VanillaVariantAudit(
-                        loader,
-                        models,
-                        registries,
-                        byteBuf,
-                        unpooled,
-                        friendly,
-                        registryAccess,
-                        decode,
-                        encode);
+        var audit = new VanillaVariantAudit(
+                loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
         audit.named();
         audit.fallbacks();
         audit.context();
@@ -73,10 +64,9 @@ final class VanillaVariantAudit {
         audit.actionFailures();
         audit.commands();
         audit.numericArgumentFlags();
-        System.out.println(
-                "Verified "
-                        + audit.compared
-                        + " named-codec, context, command, and payload boundary cases against vanilla");
+        System.out.println("Verified "
+                + audit.compared
+                + " named-codec, context, command, and payload boundary cases against vanilla");
     }
 
     private void commands() throws Exception {
@@ -85,21 +75,15 @@ final class VanillaVariantAudit {
         PacketCodec<Object> generated =
                 (PacketCodec<Object>) Class.forName(name).getField("CODEC").get(null);
         Object source = source(models.get(name));
-        var trees =
+        var trees = java.util.List.of(
+                java.util.List.<CommandNode>of(),
+                java.util.List.of(new CommandNode(0, new int[] {-1, 9}, 0, null)),
+                java.util.List.of(new CommandNode(0, new int[] {1}, 0, null), new CommandNode(8, new int[0], 0, null)),
+                java.util.List.of(new CommandNode(0, new int[] {0}, 0, null)),
+                java.util.List.of(new CommandNode(8, new int[0], 0, null)),
                 java.util.List.of(
-                        java.util.List.<CommandNode>of(),
-                        java.util.List.of(new CommandNode(0, new int[] {-1, 9}, 0, null)),
-                        java.util.List.of(
-                                new CommandNode(0, new int[] {1}, 0, null),
-                                new CommandNode(8, new int[0], 0, null)),
-                        java.util.List.of(new CommandNode(0, new int[] {0}, 0, null)),
-                        java.util.List.of(new CommandNode(8, new int[0], 0, null)),
-                        java.util.List.of(
-                                new CommandNode(0, new int[] {1}, 0, null),
-                                new CommandNode(0, new int[] {0}, 0, null)),
-                        java.util.List.of(
-                                new CommandNode(8, new int[0], 1, null),
-                                new CommandNode(8, new int[0], 0, null)));
+                        new CommandNode(0, new int[] {1}, 0, null), new CommandNode(0, new int[] {0}, 0, null)),
+                java.util.List.of(new CommandNode(8, new int[0], 1, null), new CommandNode(8, new int[0], 0, null)));
         for (int index = 0; index < trees.size(); index++) {
             ByteBuf buffer = Unpooled.buffer();
             byte[] bytes;
@@ -120,13 +104,9 @@ final class VanillaVariantAudit {
                     assertArrayEquals(bytes, body(generated, value));
                     assertArrayEquals(bytes, sourceEncode(source, sourceDecode(source, bytes)));
                 } else {
-                    var failure =
-                            assertThrows(
-                                    IllegalStateException.class, () -> generated.decode(input));
-                    var vanilla =
-                            assertThrows(
-                                    java.lang.reflect.InvocationTargetException.class,
-                                    () -> sourceDecode(source, bytes));
+                    var failure = assertThrows(IllegalStateException.class, () -> generated.decode(input));
+                    var vanilla = assertThrows(
+                            java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes));
                     assertEquals(failure.getMessage(), vanilla.getCause().getMessage());
                 }
                 compared++;
@@ -161,73 +141,50 @@ final class VanillaVariantAudit {
                     input.release();
                 }
             }
-        for (byte[] bytes :
-                new byte[][] {
-                    new byte[0],
-                    new byte[] {1},
-                    new byte[] {1, 0},
-                    new byte[] {1, 0, 1},
-                    new byte[] {1, 18, 0, 1, 'x', 0, 2}
-                }) {
+        for (byte[] bytes : new byte[][] {
+            new byte[0], new byte[] {1}, new byte[] {1, 0}, new byte[] {1, 0, 1}, new byte[] {1, 18, 0, 1, 'x', 0, 2}
+        }) {
             ByteBuf input = Unpooled.wrappedBuffer(bytes);
             try {
                 assertThrows(RuntimeException.class, () -> generated.decode(input));
             } finally {
                 input.release();
             }
-            assertThrows(
-                    java.lang.reflect.InvocationTargetException.class,
-                    () -> sourceDecode(source, bytes));
+            assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes));
             compared++;
         }
     }
 
     private void numericArgumentFlags() throws Exception {
-        var table =
-                models.values().stream()
-                        .filter(
-                                m ->
-                                        m.has("registry")
-                                                && m.get("registry")
-                                                        .getAsString()
-                                                        .equals("COMMAND_ARGUMENT_TYPE"))
-                        .findFirst()
-                        .orElseThrow();
-        Object registry =
-                loader.loadClass("net.minecraft.core.registries.BuiltInRegistries")
-                        .getField("COMMAND_ARGUMENT_TYPE")
-                        .get(null);
+        var table = models.values().stream()
+                .filter(m ->
+                        m.has("registry") && m.get("registry").getAsString().equals("COMMAND_ARGUMENT_TYPE"))
+                .findFirst()
+                .orElseThrow();
+        Object registry = loader.loadClass("net.minecraft.core.registries.BuiltInRegistries")
+                .getField("COMMAND_ARGUMENT_TYPE")
+                .get(null);
         for (var entry : table.getAsJsonArray("cases")) {
             var branch = entry.getAsJsonObject();
             String name = branch.get("name").getAsString();
-            if (!java.util.Set.of(
-                            "brigadier:float",
-                            "brigadier:double",
-                            "brigadier:integer",
-                            "brigadier:long")
+            if (!java.util.Set.of("brigadier:float", "brigadier:double", "brigadier:integer", "brigadier:long")
                     .contains(name)) continue;
             var schema = branch.getAsJsonObject("value");
             Class<?> generatedType = Class.forName(schema.get("type").getAsString());
             @SuppressWarnings("unchecked")
             PacketCodec<Object> generated =
                     (PacketCodec<Object>) generatedType.getField("CODEC").get(null);
-            Object source =
-                    loader.loadClass("net.minecraft.core.Registry")
-                            .getMethod("byId", int.class)
-                            .invoke(registry, branch.get("key").getAsInt());
-            var reader =
-                    java.util.Arrays.stream(source.getClass().getMethods())
-                            .filter(
-                                    m ->
-                                            m.getName().equals("deserializeFromNetwork")
-                                                    && !m.isBridge())
-                            .findFirst()
-                            .orElseThrow();
-            var writer =
-                    java.util.Arrays.stream(source.getClass().getMethods())
-                            .filter(m -> m.getName().equals("serializeToNetwork") && !m.isBridge())
-                            .findFirst()
-                            .orElseThrow();
+            Object source = loader.loadClass("net.minecraft.core.Registry")
+                    .getMethod("byId", int.class)
+                    .invoke(registry, branch.get("key").getAsInt());
+            var reader = java.util.Arrays.stream(source.getClass().getMethods())
+                    .filter(m -> m.getName().equals("deserializeFromNetwork") && !m.isBridge())
+                    .findFirst()
+                    .orElseThrow();
+            var writer = java.util.Arrays.stream(source.getClass().getMethods())
+                    .filter(m -> m.getName().equals("serializeToNetwork") && !m.isBridge())
+                    .findFirst()
+                    .orElseThrow();
             for (int flags = 0; flags < 256; flags++) {
                 ByteBuf bytes = Unpooled.buffer();
                 byte[] body;
@@ -236,19 +193,12 @@ final class VanillaVariantAudit {
                     for (int bit : new int[] {1, 2})
                         if ((flags & bit) != 0) {
                             switch (name) {
-                                case "brigadier:float" ->
-                                        bytes.writeFloat(
-                                                bit == 1 ? -12.5f : Float.POSITIVE_INFINITY);
-                                case "brigadier:double" ->
-                                        bytes.writeDouble(bit == 1 ? Double.NaN : 123.75);
+                                case "brigadier:float" -> bytes.writeFloat(bit == 1 ? -12.5f : Float.POSITIVE_INFINITY);
+                                case "brigadier:double" -> bytes.writeDouble(bit == 1 ? Double.NaN : 123.75);
                                 case "brigadier:integer" ->
-                                        bytes.writeInt(
-                                                bit == 1
-                                                        ? Integer.MIN_VALUE + 1
-                                                        : Integer.MAX_VALUE - 1);
+                                    bytes.writeInt(bit == 1 ? Integer.MIN_VALUE + 1 : Integer.MAX_VALUE - 1);
                                 case "brigadier:long" ->
-                                        bytes.writeLong(
-                                                bit == 1 ? Long.MIN_VALUE + 1 : Long.MAX_VALUE - 1);
+                                    bytes.writeLong(bit == 1 ? Long.MIN_VALUE + 1 : Long.MAX_VALUE - 1);
                             }
                         }
                     body = new byte[bytes.readableBytes()];
@@ -276,8 +226,7 @@ final class VanillaVariantAudit {
                     writer.invoke(source, value, input(sourceOutput));
                     byte[] actual =
                             new byte[(int) byteBuf.getMethod("readableBytes").invoke(sourceOutput)];
-                    byteBuf.getMethod("readBytes", byte[].class)
-                            .invoke(sourceOutput, (Object) actual);
+                    byteBuf.getMethod("readBytes", byte[].class).invoke(sourceOutput, (Object) actual);
                     assertArrayEquals(expected, actual, name + " flags " + flags);
                     compared++;
                 } finally {
@@ -289,8 +238,7 @@ final class VanillaVariantAudit {
     }
 
     private void actionFailures() throws Exception {
-        String name =
-                "org.stackanvil.packetforge.protocol.packet.game.ClientboundPlayerInfoUpdatePacket";
+        String name = "org.stackanvil.packetforge.protocol.packet.game.ClientboundPlayerInfoUpdatePacket";
         @SuppressWarnings("unchecked")
         PacketCodec<Object> generated =
                 (PacketCodec<Object>) Class.forName(name).getField("CODEC").get(null);
@@ -324,17 +272,14 @@ final class VanillaVariantAudit {
             } finally {
                 input.release();
             }
-            assertThrows(
-                    java.lang.reflect.InvocationTargetException.class,
-                    () -> sourceDecode(source, bytes));
+            assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes));
             compared++;
         }
     }
 
     private void loginQueries() throws Exception {
         for (boolean answer : new boolean[] {false, true}) {
-            String simple =
-                    answer ? "ServerboundCustomQueryAnswerPacket" : "ClientboundCustomQueryPacket";
+            String simple = answer ? "ServerboundCustomQueryAnswerPacket" : "ClientboundCustomQueryPacket";
             String generatedName = "org.stackanvil.packetforge.protocol.packet.login." + simple;
             var model = models.get(generatedName);
             Class<?> generatedType = Class.forName(generatedName);
@@ -343,33 +288,28 @@ final class VanillaVariantAudit {
                     (PacketCodec<Object>) generatedType.getField("CODEC").get(null);
             Object source = source(model);
             Class<?> original = loader.loadClass("net.minecraft.network.protocol.login." + simple);
-            for (byte[] data :
-                    new byte[][] {
-                        new byte[0],
-                        new byte[] {0},
-                        new byte[] {1},
-                        new byte[] {0, 9},
-                        new byte[] {1, 5, -1},
-                        new byte[] {2, 9},
-                        new byte[1048576],
-                        new byte[1048577]
-                    }) {
-                Object value =
-                        answer
-                                ? generatedType
-                                        .getConstructor(int.class, byte[].class)
-                                        .newInstance(-123, data)
-                                : generatedType
-                                        .getConstructor(int.class, String.class, byte[].class)
-                                        .newInstance(-123, "packetforge:query", data);
+            for (byte[] data : new byte[][] {
+                new byte[0],
+                new byte[] {0},
+                new byte[] {1},
+                new byte[] {0, 9},
+                new byte[] {1, 5, -1},
+                new byte[] {2, 9},
+                new byte[1048576],
+                new byte[1048577]
+            }) {
+                Object value = answer
+                        ? generatedType.getConstructor(int.class, byte[].class).newInstance(-123, data)
+                        : generatedType
+                                .getConstructor(int.class, String.class, byte[].class)
+                                .newInstance(-123, "packetforge:query", data);
                 byte[] bytes = body(generated, value);
                 ByteBuf input = Unpooled.wrappedBuffer(bytes);
                 try {
                     if (data.length > 1048576) {
                         assertThrows(IllegalArgumentException.class, () -> generated.decode(input));
                         assertThrows(
-                                java.lang.reflect.InvocationTargetException.class,
-                                () -> sourceDecode(source, bytes));
+                                java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes));
                     } else {
                         Object parsed = generated.decode(input);
                         assertFalse(input.isReadable());
@@ -378,16 +318,13 @@ final class VanillaVariantAudit {
                         assertArrayEquals(bytes, body(generated, parsed));
                         Object vanilla = sourceDecode(source, bytes);
                         assertEquals(-123, original.getMethod("transactionId").invoke(vanilla));
-                        Object canonical =
-                                answer
-                                        ? generatedType
-                                                .getConstructor(int.class, byte[].class)
-                                                .newInstance(-123, new byte[] {1})
-                                        : generatedType
-                                                .getConstructor(
-                                                        int.class, String.class, byte[].class)
-                                                .newInstance(
-                                                        -123, "packetforge:query", new byte[0]);
+                        Object canonical = answer
+                                ? generatedType
+                                        .getConstructor(int.class, byte[].class)
+                                        .newInstance(-123, new byte[] {1})
+                                : generatedType
+                                        .getConstructor(int.class, String.class, byte[].class)
+                                        .newInstance(-123, "packetforge:query", new byte[0]);
                         assertArrayEquals(
                                 body(generated, canonical),
                                 sourceEncode(source, vanilla),
@@ -398,45 +335,34 @@ final class VanillaVariantAudit {
                     input.release();
                 }
             }
-            Class<?> payloadType =
-                    loader.loadClass(
-                            "net.minecraft.network.protocol.login.custom."
-                                    + (answer ? "CustomQueryAnswerPayload" : "CustomQueryPayload"));
-            Object channel =
-                    loader.loadClass("net.minecraft.resources.Identifier")
-                            .getMethod("parse", String.class)
-                            .invoke(null, "packetforge:query");
+            Class<?> payloadType = loader.loadClass("net.minecraft.network.protocol.login.custom."
+                    + (answer ? "CustomQueryAnswerPayload" : "CustomQueryPayload"));
+            Object channel = loader.loadClass("net.minecraft.resources.Identifier")
+                    .getMethod("parse", String.class)
+                    .invoke(null, "packetforge:query");
             for (int length : new int[] {0, 3, 1048576, 1048577}) {
                 byte[] data = new byte[length];
                 if (length > 0) data[0] = 123;
-                Object payload =
-                        java.lang.reflect.Proxy.newProxyInstance(
-                                loader,
-                                new Class<?>[] {payloadType},
-                                (proxy, method, arguments) -> {
-                                    if (method.getName().equals("id")) return channel;
-                                    if (method.getName().equals("write")) {
-                                        byteBuf.getMethod("writeBytes", byte[].class)
-                                                .invoke(arguments[0], (Object) data);
-                                        return null;
-                                    }
-                                    throw new UnsupportedOperationException(method.toString());
-                                });
-                Object vanilla =
-                        original.getConstructor(int.class, payloadType).newInstance(-123, payload);
+                Object payload = java.lang.reflect.Proxy.newProxyInstance(
+                        loader, new Class<?>[] {payloadType}, (proxy, method, arguments) -> {
+                            if (method.getName().equals("id")) return channel;
+                            if (method.getName().equals("write")) {
+                                byteBuf.getMethod("writeBytes", byte[].class).invoke(arguments[0], (Object) data);
+                                return null;
+                            }
+                            throw new UnsupportedOperationException(method.toString());
+                        });
+                Object vanilla = original.getConstructor(int.class, payloadType).newInstance(-123, payload);
                 byte[] wire = answer ? new byte[length + 1] : data;
                 if (answer) {
                     wire[0] = 1;
                     System.arraycopy(data, 0, wire, 1, length);
                 }
-                Object value =
-                        answer
-                                ? generatedType
-                                        .getConstructor(int.class, byte[].class)
-                                        .newInstance(-123, wire)
-                                : generatedType
-                                        .getConstructor(int.class, String.class, byte[].class)
-                                        .newInstance(-123, "packetforge:query", wire);
+                Object value = answer
+                        ? generatedType.getConstructor(int.class, byte[].class).newInstance(-123, wire)
+                        : generatedType
+                                .getConstructor(int.class, String.class, byte[].class)
+                                .newInstance(-123, "packetforge:query", wire);
                 assertArrayEquals(
                         sourceEncode(source, vanilla),
                         body(generated, value),
@@ -444,12 +370,9 @@ final class VanillaVariantAudit {
                 compared++;
             }
             if (answer) {
-                Object absent =
-                        original.getConstructor(int.class, payloadType).newInstance(-123, null);
+                Object absent = original.getConstructor(int.class, payloadType).newInstance(-123, null);
                 Object generatedAbsent =
-                        generatedType
-                                .getConstructor(int.class, byte[].class)
-                                .newInstance(-123, new byte[] {0});
+                        generatedType.getConstructor(int.class, byte[].class).newInstance(-123, new byte[] {0});
                 assertArrayEquals(sourceEncode(source, absent), body(generated, generatedAbsent));
                 compared++;
             }
@@ -508,15 +431,18 @@ final class VanillaVariantAudit {
                     || model.get("sourceCodecField").getAsString().equals("STREAM_CODEC")) continue;
             Class<?> type = Class.forName(model.get("generatedName").getAsString());
             @SuppressWarnings("unchecked")
-            PacketCodec<Object> generated = (PacketCodec<Object>) type.getField("CODEC").get(null);
+            PacketCodec<Object> generated =
+                    (PacketCodec<Object>) type.getField("CODEC").get(null);
             Object source = source(model);
             for (int variant = 0; variant < 3; variant++) {
-                byte[] expected =
-                        body(generated, GeneratedRoundTripTest.sample(type, "", variant, models));
+                byte[] expected = body(generated, GeneratedRoundTripTest.sample(type, "", variant, models));
                 byte[] actual = sourceEncode(source, sourceDecode(source, expected));
                 if (!Arrays.equals(expected, actual))
                     VanillaCompatibilityTest.assertSameWireValues(
-                            generated, expected, actual, model.get("originalName").getAsString());
+                            generated,
+                            expected,
+                            actual,
+                            model.get("originalName").getAsString());
                 compared++;
             }
         }
@@ -527,15 +453,13 @@ final class VanillaVariantAudit {
             if (!definition.has("fallback")) continue;
             String name = definition.get("name").getAsString();
             @SuppressWarnings("unchecked")
-            PacketCodec<Object> generated =
-                    (PacketCodec<Object>) GeneratedWireCodecs.class.getField(name).get(null);
-            Object source =
-                    loader.loadClass(definition.get("sourceOwner").getAsString())
-                            .getField(definition.get("sourceCodecField").getAsString())
-                            .get(null);
+            PacketCodec<Object> generated = (PacketCodec<Object>)
+                    GeneratedWireCodecs.class.getField(name).get(null);
+            Object source = loader.loadClass(definition.get("sourceOwner").getAsString())
+                    .getField(definition.get("sourceCodecField").getAsString())
+                    .get(null);
             String shape = definition.getAsJsonObject("fallback").get("shape").getAsString();
-            int maximum =
-                    Integer.parseInt(shape.substring(shape.indexOf('(') + 1, shape.indexOf(')')));
+            int maximum = Integer.parseInt(shape.substring(shape.indexOf('(') + 1, shape.indexOf(')')));
             String channel = "packetforge:unknown";
             for (int length : new int[] {0, 1, maximum, maximum + 1}) {
                 byte[] data = new byte[length];
@@ -559,9 +483,7 @@ final class VanillaVariantAudit {
                     } finally {
                         input.release();
                     }
-                    assertThrows(
-                            java.lang.reflect.InvocationTargetException.class,
-                            () -> sourceDecode(source, bytes));
+                    assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes));
                     compared++;
                     continue;
                 }
@@ -577,16 +499,12 @@ final class VanillaVariantAudit {
                 }
                 Object packet = sourceDecode(source, bytes),
                         payload = packet.getClass().getMethod("payload").invoke(packet);
-                Object type =
-                        loader.loadClass(
-                                        "net.minecraft.network.protocol.common.custom.CustomPacketPayload")
-                                .getMethod("type")
-                                .invoke(payload);
-                Object id =
-                        loader.loadClass(
-                                        "net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type")
-                                .getMethod("id")
-                                .invoke(type);
+                Object type = loader.loadClass("net.minecraft.network.protocol.common.custom.CustomPacketPayload")
+                        .getMethod("type")
+                        .invoke(payload);
+                Object id = loader.loadClass("net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type")
+                        .getMethod("id")
+                        .invoke(type);
                 assertEquals(channel, id.toString());
                 ByteBuf identifier = Unpooled.buffer();
                 try {
@@ -594,9 +512,7 @@ final class VanillaVariantAudit {
                     byte[] expected = new byte[identifier.readableBytes()];
                     identifier.readBytes(expected);
                     assertArrayEquals(
-                            expected,
-                            sourceEncode(source, packet),
-                            "Vanilla intentionally discards unknown data");
+                            expected, sourceEncode(source, packet), "Vanilla intentionally discards unknown data");
                 } finally {
                     identifier.release();
                 }
@@ -605,10 +521,8 @@ final class VanillaVariantAudit {
             // Known codecs keep their own limits, even when their payload exceeds the fallback
             // limit.
             var branch = definition.getAsJsonArray("cases").get(0).getAsJsonObject();
-            Class<?> brand =
-                    (Class<?>)
-                            GeneratedRoundTripTest.type(
-                                    branch.getAsJsonObject("value").get("type").getAsString());
+            Class<?> brand = (Class<?>) GeneratedRoundTripTest.type(
+                    branch.getAsJsonObject("value").get("type").getAsString());
             Object payload = brand.getConstructor(String.class).newInstance("é".repeat(30000));
             byte[] bytes = body(generated, new Variant<>(branch.get("key").getAsString(), payload));
             assertArrayEquals(bytes, sourceEncode(source, sourceDecode(source, bytes)));
@@ -618,36 +532,29 @@ final class VanillaVariantAudit {
 
     private void context() throws Exception {
         Class<?> packetType =
-                loader.loadClass(
-                        "net.minecraft.network.protocol.game.ServerboundCommandSuggestionPacket");
+                loader.loadClass("net.minecraft.network.protocol.game.ServerboundCommandSuggestionPacket");
         Object full = packetType.getField("STREAM_CODEC").get(null),
                 chat = packetType.getField("CHAT_ONLY_STREAM_CODEC").get(null);
         for (boolean commands : new boolean[] {false, true})
             for (int length : new int[] {256, 257, 32500, 32501}) {
-                PacketCodec<Object> generated =
-                        cast(
-                                commands
-                                        ? ServerboundCommandSuggestionPacket.CODEC
-                                        : ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC
-                                                .CODEC);
-                Object value =
+                PacketCodec<Object> generated = cast(
                         commands
-                                ? new ServerboundCommandSuggestionPacket(7, "é".repeat(length))
-                                : new ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC(
-                                        7, "é".repeat(length));
+                                ? ServerboundCommandSuggestionPacket.CODEC
+                                : ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC);
+                Object value = commands
+                        ? new ServerboundCommandSuggestionPacket(7, "é".repeat(length))
+                        : new ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC(7, "é".repeat(length));
                 Object
                         vanilla =
                                 packetType
                                         .getConstructor(int.class, String.class)
                                         .newInstance(7, "é".repeat(length)),
                         source = commands ? full : chat;
-                if (length <= 32500)
-                    assertArrayEquals(body(generated, value), sourceEncode(source, vanilla));
+                if (length <= 32500) assertArrayEquals(body(generated, value), sourceEncode(source, vanilla));
                 else {
                     assertThrows(IllegalArgumentException.class, () -> body(generated, value));
                     assertThrows(
-                            java.lang.reflect.InvocationTargetException.class,
-                            () -> sourceEncode(source, vanilla));
+                            java.lang.reflect.InvocationTargetException.class, () -> sourceEncode(source, vanilla));
                 }
                 ByteBuf buffer = Unpooled.buffer();
                 byte[] bytes;
@@ -667,10 +574,8 @@ final class VanillaVariantAudit {
                         assertFalse(input.isReadable());
                     } else {
                         assertThrows(IllegalArgumentException.class, () -> generated.decode(input));
-                        var rejected =
-                                assertThrows(
-                                        java.lang.reflect.InvocationTargetException.class,
-                                        () -> sourceDecode(source, bytes));
+                        var rejected = assertThrows(
+                                java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes));
                         if (!commands)
                             assertEquals(
                                     "net.minecraft.network.SkipPacketDecoderException",
@@ -681,28 +586,21 @@ final class VanillaVariantAudit {
                 }
                 compared++;
             }
-        for (byte[] malformed :
-                new byte[][] {
-                    new byte[0],
-                    {(byte) 0x80},
-                    {(byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0},
-                    {0, (byte) 0x80},
-                    {0, 1},
-                    {0, -1, -1, -1, -1, 15}
-                }) {
-            var rejected =
-                    assertThrows(
-                            java.lang.reflect.InvocationTargetException.class,
-                            () -> sourceDecode(chat, malformed));
+        for (byte[] malformed : new byte[][] {
+            new byte[0],
+            {(byte) 0x80},
+            {(byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0},
+            {0, (byte) 0x80},
+            {0, 1},
+            {0, -1, -1, -1, -1, 15}
+        }) {
+            var rejected = assertThrows(
+                    java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(chat, malformed));
             ByteBuf input = Unpooled.wrappedBuffer(malformed);
             try {
-                var failure =
-                        assertThrows(
-                                RuntimeException.class,
-                                () ->
-                                        ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC
-                                                .CODEC
-                                                .decode(input));
+                var failure = assertThrows(
+                        RuntimeException.class,
+                        () -> ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC.decode(input));
                 assertEquals(
                         rejected.getCause()
                                 .getClass()
@@ -715,26 +613,19 @@ final class VanillaVariantAudit {
                 input.release();
             }
         }
-        for (byte[] malformedUtf8 :
-                new byte[][] {
-                    {0, 2, (byte) 0xc0, (byte) 0x80},
-                    {0, 1, (byte) 0xed},
-                    {0, 3, (byte) 0xe0, (byte) 0x80, (byte) 0x80},
-                    {0, 4, (byte) 0xf0, (byte) 0x9f, (byte) 0x98, (byte) 0x83}
-                }) {
+        for (byte[] malformedUtf8 : new byte[][] {
+            {0, 2, (byte) 0xc0, (byte) 0x80},
+            {0, 1, (byte) 0xed},
+            {0, 3, (byte) 0xe0, (byte) 0x80, (byte) 0x80},
+            {0, 4, (byte) 0xf0, (byte) 0x9f, (byte) 0x98, (byte) 0x83}
+        }) {
             ByteBuf input = Unpooled.wrappedBuffer(malformedUtf8);
             try {
-                var value =
-                        ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC.decode(
-                                input);
+                var value = ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC.decode(input);
                 Object original = sourceDecode(chat, malformedUtf8);
                 assertEquals(value.command(), packetType.getMethod("command").invoke(original));
                 assertArrayEquals(
-                        body(
-                                cast(
-                                        ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC
-                                                .CODEC),
-                                value),
+                        body(cast(ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC), value),
                         sourceEncode(chat, original));
                 assertFalse(input.isReadable());
                 compared++;
@@ -743,56 +634,39 @@ final class VanillaVariantAudit {
             }
         }
         Class<?> protocols = loader.loadClass("net.minecraft.network.protocol.game.GameProtocols"),
-                context =
-                        loader.loadClass(
-                                "net.minecraft.network.protocol.game.GameProtocols$Context");
+                context = loader.loadClass("net.minecraft.network.protocol.game.GameProtocols$Context");
         var infinite = new AtomicBoolean(false);
-        Object flags =
-                java.lang.reflect.Proxy.newProxyInstance(
-                        loader,
-                        new Class<?>[] {context},
-                        (proxy, method, arguments) ->
-                                method.getName().equals("hasInfiniteMaterials")
-                                        ? infinite.get()
-                                        : false);
+        Object flags = java.lang.reflect.Proxy.newProxyInstance(
+                loader,
+                new Class<?>[] {context},
+                (proxy, method, arguments) -> method.getName().equals("hasInfiniteMaterials") ? infinite.get() : false);
         Object modifier = protocols.getField("HAS_INFINITE_MATERIALS").get(null);
         Class<?> streamCodec = loader.loadClass("net.minecraft.network.codec.StreamCodec");
         Class<?> creativePacket =
-                loader.loadClass(
-                        "net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket");
+                loader.loadClass("net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket");
         Object original = creativePacket.getField("STREAM_CODEC").get(null);
-        Object gate =
-                loader.loadClass("net.minecraft.network.protocol.CodecModifier")
-                        .getMethod("apply", streamCodec, Object.class)
-                        .invoke(modifier, original, flags);
-        Object empty =
-                loader.loadClass("net.minecraft.world.item.ItemStack").getField("EMPTY").get(null);
-        Object packet =
-                creativePacket
-                        .getConstructor(
-                                short.class, loader.loadClass("net.minecraft.world.item.ItemStack"))
-                        .newInstance((short) 1, empty);
-        byte[] bytes =
-                body(
-                        cast(ServerboundSetCreativeModeSlotPacket.CODEC),
-                        new ServerboundSetCreativeModeSlotPacket((short) 1, ItemStack.EMPTY));
-        assertThrows(
-                java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(gate, bytes));
-        assertThrows(
-                java.lang.reflect.InvocationTargetException.class,
-                () -> sourceEncode(gate, packet));
+        Object gate = loader.loadClass("net.minecraft.network.protocol.CodecModifier")
+                .getMethod("apply", streamCodec, Object.class)
+                .invoke(modifier, original, flags);
+        Object empty = loader.loadClass("net.minecraft.world.item.ItemStack")
+                .getField("EMPTY")
+                .get(null);
+        Object packet = creativePacket
+                .getConstructor(short.class, loader.loadClass("net.minecraft.world.item.ItemStack"))
+                .newInstance((short) 1, empty);
+        byte[] bytes = body(
+                cast(ServerboundSetCreativeModeSlotPacket.CODEC),
+                new ServerboundSetCreativeModeSlotPacket((short) 1, ItemStack.EMPTY));
+        assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(gate, bytes));
+        assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceEncode(gate, packet));
         compared++;
         infinite.set(true);
         assertArrayEquals(bytes, sourceEncode(gate, sourceDecode(gate, bytes)));
         compared++;
-        byte[] invalid =
-                body(
-                        cast(ServerboundSetCreativeModeSlotPacket.CODEC),
-                        new ServerboundSetCreativeModeSlotPacket(
-                                (short) 1, new ItemStack(100, 1, ComponentPatch.EMPTY)));
-        assertThrows(
-                java.lang.reflect.InvocationTargetException.class,
-                () -> sourceDecode(gate, invalid));
+        byte[] invalid = body(
+                cast(ServerboundSetCreativeModeSlotPacket.CODEC),
+                new ServerboundSetCreativeModeSlotPacket((short) 1, new ItemStack(100, 1, ComponentPatch.EMPTY)));
+        assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(gate, invalid));
         compared++;
     }
 

@@ -1,8 +1,14 @@
 import com.diffplug.gradle.spotless.SpotlessExtension
+import org.gradle.api.plugins.JavaApplication
 
 plugins {
     base
     id("com.diffplug.spotless") version "8.11.0" apply false
+}
+val palantirJavaFormatVersion = providers.gradleProperty("palantirJavaFormatVersion").get()
+// The generator's source formatter uses the JDK compiler parser.
+val formatterJvmArgs = listOf("api", "code", "file", "parser", "tree", "util").map {
+    "--add-exports=jdk.compiler/com.sun.tools.javac.$it=ALL-UNNAMED"
 }
 allprojects {
     group = "org.stackanvil.packetforge"
@@ -15,7 +21,7 @@ subprojects {
     extensions.configure<SpotlessExtension> {
         java {
             target("src/*/java/**/*.java")
-            googleJavaFormat("1.36.1").aosp()
+            palantirJavaFormat(palantirJavaFormatVersion)
             removeUnusedImports()
         }
     }
@@ -30,4 +36,13 @@ subprojects {
     }
     tasks.withType<Test>().configureEach { useJUnitPlatform() }
     tasks.withType<JavaCompile>().configureEach { options.encoding = "UTF-8" }
+    tasks.withType<JavaExec>().configureEach { jvmArgs(formatterJvmArgs) }
+    if (name == "generator") {
+        tasks.withType<Test>().configureEach { jvmArgs(formatterJvmArgs) }
+        plugins.withId("application") {
+            extensions.configure<JavaApplication> {
+                applicationDefaultJvmArgs = formatterJvmArgs
+            }
+        }
+    }
 }

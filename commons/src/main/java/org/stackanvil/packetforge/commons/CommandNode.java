@@ -6,6 +6,5 @@ public record CommandNode(int flags, int[] children, int redirect, Stub stub) {
 
     public record Literal(String name) implements Stub {}
 
-    public record Argument(String name, Variant<Integer> argument, String suggestion)
-            implements Stub {}
+    public record Argument(String name, Variant<Integer> argument, String suggestion) implements Stub {}
 }

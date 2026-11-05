@@ -11,10 +11,8 @@ import org.junit.jupiter.api.Test;
 class DiscriminatorCodecsTest {
     @Test
     void dispatchesPayloadsAndRejectsUnknownDiscriminators() {
-        var codec =
-                WireCodecs.dispatch(
-                        WireCodecs.VAR_INT,
-                        Map.of(0, WireCodecs.UNIT, 1, WireCodecs.STRING, 2, WireCodecs.INT));
+        var codec = WireCodecs.dispatch(
+                WireCodecs.VAR_INT, Map.of(0, WireCodecs.UNIT, 1, WireCodecs.STRING, 2, WireCodecs.INT));
         var buffer = Unpooled.buffer();
         try {
             codec.encode(buffer, new Variant<>(1, "x"));
@@ -23,9 +21,7 @@ class DiscriminatorCodecsTest {
             assertEquals(0, buffer.readUnsignedByte());
             buffer.clear().writeByte(99);
             assertThrows(IllegalArgumentException.class, () -> codec.decode(buffer));
-            assertThrows(
-                    IllegalArgumentException.class,
-                    () -> codec.encode(buffer, new Variant<>(99, Unit.INSTANCE)));
+            assertThrows(IllegalArgumentException.class, () -> codec.encode(buffer, new Variant<>(99, Unit.INSTANCE)));
         } finally {
             buffer.release();
         }
@@ -35,14 +31,10 @@ class DiscriminatorCodecsTest {
     void resolvesRecursiveTablesOnceAndRoundTripsNestedValues() {
         AtomicReference<PacketCodec<Variant<Integer>>> reference = new AtomicReference<>();
         AtomicInteger initialized = new AtomicInteger();
-        PacketCodec<Variant<Integer>> codec =
-                WireCodecs.lazy(
-                        () -> {
-                            initialized.incrementAndGet();
-                            return WireCodecs.dispatch(
-                                    WireCodecs.VAR_INT,
-                                    Map.of(0, WireCodecs.UNIT, 1, reference.get()));
-                        });
+        PacketCodec<Variant<Integer>> codec = WireCodecs.lazy(() -> {
+            initialized.incrementAndGet();
+            return WireCodecs.dispatch(WireCodecs.VAR_INT, Map.of(0, WireCodecs.UNIT, 1, reference.get()));
+        });
         reference.set(codec);
         assertEquals(0, initialized.get());
         var value = new Variant<>(1, new Variant<>(1, new Variant<>(0, Unit.INSTANCE)));

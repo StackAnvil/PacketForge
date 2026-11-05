@@ -25,26 +25,16 @@ final class ActionSetAnalyzer {
                 || !(call.getArgument(0) instanceof MethodReferenceExpr writer)
                 || !(call.getArgument(1) instanceof MethodReferenceExpr reader)
                 || !reader.getIdentifier().equals("new")
-                || !analyzer.index
-                        .resolve(reader.getScope().toString(), source)
-                        .equals(source.name())
-                || !analyzer.index
-                        .resolve(writer.getScope().toString(), source)
-                        .equals(source.name()))
+                || !analyzer.index.resolve(reader.getScope().toString(), source).equals(source.name())
+                || !analyzer.index.resolve(writer.getScope().toString(), source).equals(source.name()))
             throw new Unsupported("Unknown action-set codec entry points");
-        var constructors =
-                source.declaration().getMembers().stream()
-                        .filter(
-                                m ->
-                                        m instanceof ConstructorDeclaration c
-                                                && c.getParameters().size() == 1
-                                                && c.getParameter(0)
-                                                        .getTypeAsString()
-                                                        .equals("RegistryFriendlyByteBuf"))
-                        .map(m -> (ConstructorDeclaration) m)
-                        .toList();
-        if (constructors.size() != 1)
-            throw new Unsupported("Ambiguous action-set buffer constructor");
+        var constructors = source.declaration().getMembers().stream()
+                .filter(m -> m instanceof ConstructorDeclaration c
+                        && c.getParameters().size() == 1
+                        && c.getParameter(0).getTypeAsString().equals("RegistryFriendlyByteBuf"))
+                .map(m -> (ConstructorDeclaration) m)
+                .toList();
+        if (constructors.size() != 1) throw new Unsupported("Ambiguous action-set buffer constructor");
         var constructor = constructors.getFirst();
         String input = constructor.getParameter(0).getNameAsString();
         var decode = constructor.getBody().getStatements();
@@ -63,9 +53,7 @@ final class ActionSetAnalyzer {
         var enumSource = analyzer.index.source(enumName);
         if (!(enumSource.declaration() instanceof EnumDeclaration enumeration))
             throw new Unsupported("Action mask target is not an enum");
-        if (!encode.get(0)
-                .toString()
-                .equals(output + ".writeEnumSet(this.actions, " + enumerationType + ");"))
+        if (!encode.get(0).toString().equals(output + ".writeEnumSet(this.actions, " + enumerationType + ");"))
             throw new Unsupported("Action mask reader/writer types differ");
         var entriesRead = assignment(decode.get(1), "entries");
         if (!(entriesRead instanceof MethodCallExpr readCall)
@@ -95,8 +83,7 @@ final class ActionSetAnalyzer {
                 || !(composite.getArgument(0) instanceof LambdaExpr entryWriter)
                 || !(composite.getArgument(1) instanceof LambdaExpr entryReader)
                 || entryWriter.getParameters().size() != 2
-                || entryReader.getParameters().size() != 1)
-            throw new Unsupported("Unknown action entry factory");
+                || entryReader.getParameters().size() != 1) throw new Unsupported("Unknown action entry factory");
         var readBody = block(entryReader);
         var writeBody = block(entryWriter);
         String entryInput = entryReader.getParameter(0).getNameAsString(),
@@ -104,48 +91,24 @@ final class ActionSetAnalyzer {
                 entryValue = entryWriter.getParameter(1).getNameAsString();
         if (readBody.getStatements().size() != 3
                 || writeBody.getStatements().size() != 2
-                || !(expression(readBody.getStatement(0))
-                        instanceof VariableDeclarationExpr variables)
+                || !(expression(readBody.getStatement(0)) instanceof VariableDeclarationExpr variables)
                 || variables.getVariables().size() != 1
                 || !(variables.getVariable(0).getInitializer().orElse(null)
                         instanceof ObjectCreationExpr builderCreation)
-                || !builderCreation
-                        .getArguments()
-                        .toString()
-                        .equals("[" + entryInput + ".readUUID()]"))
+                || !builderCreation.getArguments().toString().equals("[" + entryInput + ".readUUID()]"))
             throw new Unsupported("Unknown action entry UUID/builder reader");
         String builder = variables.getVariable(0).getNameAsString();
         String builderName = analyzer.index.resolve(builderCreation.getTypeAsString(), source);
         var builderSource = analyzer.index.source(builderName);
         if (!(readBody.getStatement(2) instanceof ReturnStmt built)
-                || !built.getExpression()
-                        .map(Object::toString)
-                        .orElse("")
-                        .equals(builder + ".build()"))
+                || !built.getExpression().map(Object::toString).orElse("").equals(builder + ".build()"))
             throw new Unsupported("Action entry builder result is transformed");
-        if (!writeBody
-                .getStatement(0)
-                .toString()
-                .equals(entryOutput + ".writeUUID(" + entryValue + ".profileId());"))
+        if (!writeBody.getStatement(0).toString().equals(entryOutput + ".writeUUID(" + entryValue + ".profileId());"))
             throw new Unsupported("Action entry writer has a different identifier");
         String readerField =
-                actionLoop(
-                        readBody.getStatement(1),
-                        actions,
-                        enumName,
-                        enumSource,
-                        "read",
-                        builder,
-                        entryInput);
+                actionLoop(readBody.getStatement(1), actions, enumName, enumSource, "read", builder, entryInput);
         String writerField =
-                actionLoop(
-                        writeBody.getStatement(1),
-                        actions,
-                        enumName,
-                        enumSource,
-                        "write",
-                        entryOutput,
-                        entryValue);
+                actionLoop(writeBody.getStatement(1), actions, enumName, enumSource, "write", entryOutput, entryValue);
         verifyBuilder(builderSource);
         var enumConstructors = enumeration.getConstructors();
         if (enumConstructors.size() != 1
@@ -157,13 +120,11 @@ final class ActionSetAnalyzer {
             if (!captured.getBody()
                     .getStatement(i)
                     .toString()
-                    .equals(
-                            "this."
-                                    + List.of("id", readerField, writerField).get(i)
-                                    + " = "
-                                    + captured.getParameter(i).getNameAsString()
-                                    + ";"))
-                throw new Unsupported("Action enum transforms its captures");
+                    .equals("this."
+                            + List.of("id", readerField, writerField).get(i)
+                            + " = "
+                            + captured.getParameter(i).getNameAsString()
+                            + ";")) throw new Unsupported("Action enum transforms its captures");
         List<DispatchCase> cases = new ArrayList<>();
         for (var constant : enumeration.getEntries()) {
             if (constant.getArguments().size() != 3
@@ -187,68 +148,48 @@ final class ActionSetAnalyzer {
                         && assignment.getOperator() == AssignExpr.Operator.ASSIGN
                         && assignment.getTarget() instanceof FieldAccessExpr field
                         && field.getScope().toString().equals(readValue)) {
-                    String originalType =
-                            Analyzer.declaredType(field.getNameAsString(), builderSource)
-                                    .replaceAll("@[A-Za-z0-9_.]+\\s*", "");
-                    e.setExpression(
-                            new VariableDeclarationExpr(
-                                    new VariableDeclarator(
-                                            StaticJavaParser.parseType(originalType),
-                                            field.getNameAsString(),
-                                            assignment.getValue().clone())));
+                    String originalType = Analyzer.declaredType(field.getNameAsString(), builderSource)
+                            .replaceAll("@[A-Za-z0-9_.]+\\s*", "");
+                    e.setExpression(new VariableDeclarationExpr(new VariableDeclarator(
+                            StaticJavaParser.parseType(originalType),
+                            field.getNameAsString(),
+                            assignment.getValue().clone())));
                 }
             List<Field> fields =
-                    new LinearWireProjection(analyzer)
-                            .lowerBodies(reads, writes, readBuffer, writeBuffer, enumSource);
+                    new LinearWireProjection(analyzer).lowerBodies(reads, writes, readBuffer, writeBuffer, enumSource);
             String key = enumName + "#action-" + constant.getNameAsString(),
                     name = analyzer.index.generated(enumName) + "_" + constant.getNameAsString();
-            var model =
-                    new Model(
-                            key,
-                            name,
-                            fields,
-                            List.of(),
-                            false,
-                            List.of(),
-                            null,
-                            constant.toString(),
-                            "");
+            var model = new Model(key, name, fields, List.of(), false, List.of(), null, constant.toString(), "");
             analyzer.models.put(key, model);
             cases.add(new DispatchCase(constant.getNameAsString(), modelWire(model)));
         }
         var enumModel = analyzer.model(enumName);
-        Wire key =
-                new Wire(
-                        enumModel.generatedName(),
-                        "WireCodecs.enumOrdinal(" + enumModel.generatedName() + ".values())",
-                        "enum:" + enumName);
-        String table =
-                "dispatch_" + Integer.toUnsignedString((enumName + "#action-set").hashCode());
-        String entries =
-                String.join(
-                        ", ",
-                        cases.stream()
-                                .map(
-                                        c ->
-                                                "java.util.Map.entry("
-                                                        + key.type()
-                                                        + "."
-                                                        + c.key()
-                                                        + ", (PacketCodec<?>) "
-                                                        + c.value().codec()
-                                                        + ")")
-                                .toList());
-        Wire implementation =
-                new Wire(
-                        "org.stackanvil.packetforge.commons.Variant<" + key.type() + ">",
-                        "WireCodecs.dispatch("
-                                + key.codec()
-                                + ", java.util.Map.<"
+        Wire key = new Wire(
+                enumModel.generatedName(),
+                "WireCodecs.enumOrdinal(" + enumModel.generatedName() + ".values())",
+                "enum:" + enumName);
+        String table = "dispatch_" + Integer.toUnsignedString((enumName + "#action-set").hashCode());
+        String entries = String.join(
+                ", ",
+                cases.stream()
+                        .map(c -> "java.util.Map.entry("
                                 + key.type()
-                                + ", PacketCodec<?>>ofEntries("
-                                + entries
-                                + "))",
-                        "dispatch:" + table);
+                                + "."
+                                + c.key()
+                                + ", (PacketCodec<?>) "
+                                + c.value().codec()
+                                + ")")
+                        .toList());
+        Wire implementation = new Wire(
+                "org.stackanvil.packetforge.commons.Variant<" + key.type() + ">",
+                "WireCodecs.dispatch("
+                        + key.codec()
+                        + ", java.util.Map.<"
+                        + key.type()
+                        + ", PacketCodec<?>>ofEntries("
+                        + entries
+                        + "))",
+                "dispatch:" + table);
         analyzer.dispatches.put(
                 table,
                 new Dispatch(
@@ -260,53 +201,42 @@ final class ActionSetAnalyzer {
                         implementation,
                         "",
                         ""));
-        Wire mask =
-                new Wire(
-                        "java.util.Set<" + key.type() + ">",
-                        "ActionSetCodecs.mask(" + key.type() + ".values())",
-                        "enum-mask:" + enumName);
-        Wire list =
-                new Wire(
-                        "java.util.List<org.stackanvil.packetforge.commons.ActionEntry<"
-                                + key.type()
-                                + ">>",
-                        "",
-                        "action-entries<dispatch:" + table + ">");
+        Wire mask = new Wire(
+                "java.util.Set<" + key.type() + ">",
+                "ActionSetCodecs.mask(" + key.type() + ".values())",
+                "enum-mask:" + enumName);
+        Wire list = new Wire(
+                "java.util.List<org.stackanvil.packetforge.commons.ActionEntry<" + key.type() + ">>",
+                "",
+                "action-entries<dispatch:" + table + ">");
         String entryCodec =
                 "WireCodecs.list(ActionSetCodecs.entry(actions, org.stackanvil.packetforge.protocol.GeneratedWireCodecs."
                         + table
                         + "_payloads()), Integer.MAX_VALUE)";
-        String decoder =
-                "var actions = "
-                        + mask.codec()
-                        + ".decode(input);\nvar entries = "
-                        + entryCodec
-                        + ".decode(input);\nreturn new "
-                        + generated
-                        + "(actions, entries);";
-        String encoder =
-                "var actions = value.actions();\n"
-                        + mask.codec()
-                        + ".encode(output, actions);\n"
-                        + entryCodec
-                        + ".encode(output, value.entries());";
+        String decoder = "var actions = "
+                + mask.codec()
+                + ".decode(input);\nvar entries = "
+                + entryCodec
+                + ".decode(input);\nreturn new "
+                + generated
+                + "(actions, entries);";
+        String encoder = "var actions = value.actions();\n"
+                + mask.codec()
+                + ".encode(output, actions);\n"
+                + entryCodec
+                + ".encode(output, value.entries());";
         return new ProgramLowerer.Lowered(
                 List.of(
                         new Field("actions", "EnumSet<" + enumName + ">", mask, mask),
                         new Field("entries", "List<" + source.name() + ".Entry>", list, list)),
-                new Program(
-                        decoder,
-                        encoder,
-                        List.of(mask.shape(), "UUID_CODEC", implementation.shape()),
-                        List.of()));
+                new Program(decoder, encoder, List.of(mask.shape(), "UUID_CODEC", implementation.shape()), List.of()));
     }
 
     private void verifyBuilder(SourceIndex.Source builder) {
-        var constructors =
-                builder.declaration().getMembers().stream()
-                        .filter(m -> m instanceof ConstructorDeclaration)
-                        .map(m -> (ConstructorDeclaration) m)
-                        .toList();
+        var constructors = builder.declaration().getMembers().stream()
+                .filter(m -> m instanceof ConstructorDeclaration)
+                .map(m -> (ConstructorDeclaration) m)
+                .toList();
         if (constructors.size() != 1
                 || constructors.getFirst().getParameters().size() != 1
                 || constructors.getFirst().getBody().getStatements().size() != 1
@@ -315,35 +245,30 @@ final class ActionSetAnalyzer {
                         .getBody()
                         .getStatement(0)
                         .toString()
-                        .equals(
-                                "this.profileId = "
-                                        + constructors.getFirst().getParameter(0).getNameAsString()
-                                        + ";"))
-            throw new Unsupported("Action entry builder transforms its identifier");
+                        .equals("this.profileId = "
+                                + constructors.getFirst().getParameter(0).getNameAsString()
+                                + ";")) throw new Unsupported("Action entry builder transforms its identifier");
         var build = method(builder, "build", 0);
         var body = build.getBody().get().getStatements();
         if (body.size() != 1
                 || !(body.get(0) instanceof ReturnStmt returned)
                 || !(returned.getExpression().orElse(null) instanceof ObjectCreationExpr creation))
             throw new Unsupported("Action builder has extra result operations");
-        var entrySource =
-                analyzer.index.source(analyzer.index.resolve(creation.getTypeAsString(), builder));
+        var entrySource = analyzer.index.source(analyzer.index.resolve(creation.getTypeAsString(), builder));
         if (!(entrySource.declaration() instanceof RecordDeclaration record)
                 || creation.getArguments().size() != record.getParameters().size()
                 || record.getMembers().stream()
-                        .anyMatch(
-                                m ->
-                                        m instanceof CompactConstructorDeclaration
-                                                || m instanceof ConstructorDeclaration c
-                                                        && c.getParameters().size()
-                                                                == record.getParameters().size()))
+                        .anyMatch(m -> m instanceof CompactConstructorDeclaration
+                                || m instanceof ConstructorDeclaration c
+                                        && c.getParameters().size()
+                                                == record.getParameters().size()))
             throw new Unsupported("Action result is not a direct wire record");
         for (int i = 0; i < record.getParameters().size(); i++)
             if (!creation.getArgument(i)
                             .toString()
                             .equals("this." + record.getParameter(i).getNameAsString())
-                    || !record.getMethodsByName(record.getParameter(i).getNameAsString()).isEmpty())
-                throw new Unsupported("Action builder or record transforms its fields");
+                    || !record.getMethodsByName(record.getParameter(i).getNameAsString())
+                            .isEmpty()) throw new Unsupported("Action builder or record transforms its fields");
     }
 
     private String actionLoop(
@@ -359,17 +284,13 @@ final class ActionSetAnalyzer {
                 || loop.getVariable().getVariables().size() != 1
                 || !analyzer.index
                         .resolve(loop.getVariable().getVariable(0).getTypeAsString(), source)
-                        .equals(enumeration))
-            throw new Unsupported("Unknown action traversal order");
+                        .equals(enumeration)) throw new Unsupported("Unknown action traversal order");
         Statement operation = loop.getBody();
         if (operation instanceof BlockStmt block && block.getStatements().size() == 1)
             operation = block.getStatement(0);
         if (!(expression(operation) instanceof MethodCallExpr call)
                 || !call.getNameAsString().equals(method)
-                || !call.getArguments().stream()
-                        .map(Object::toString)
-                        .toList()
-                        .equals(List.of(first, second))
+                || !call.getArguments().stream().map(Object::toString).toList().equals(List.of(first, second))
                 || !(call.getScope().orElse(null) instanceof FieldAccessExpr field)
                 || !field.getScope()
                         .toString()
@@ -407,13 +328,10 @@ final class ActionSetAnalyzer {
     }
 
     private MethodDeclaration method(SourceIndex.Source source, String name, int parameters) {
-        var methods =
-                source.declaration().getMethodsByName(name).stream()
-                        .filter(
-                                m ->
-                                        m.getParameters().size() == parameters
-                                                && m.getBody().isPresent())
-                        .toList();
+        var methods = source.declaration().getMethodsByName(name).stream()
+                .filter(m ->
+                        m.getParameters().size() == parameters && m.getBody().isPresent())
+                .toList();
         if (methods.size() != 1) throw new Unsupported("Ambiguous action-set method: " + name);
         return methods.getFirst();
     }
@@ -427,8 +345,7 @@ final class ActionSetAnalyzer {
     }
 
     private Expression expression(Statement statement) {
-        if (!(statement instanceof ExpressionStmt expression))
-            throw new Unsupported("Unknown action-set statement");
+        if (!(statement instanceof ExpressionStmt expression)) throw new Unsupported("Unknown action-set statement");
         return expression.getExpression();
     }
 }

@@ -17,8 +17,7 @@ public sealed interface MovementDelta permits MovementDelta.Linear, MovementDelt
     record Stepped(List<Step> steps) implements MovementDelta {
         public Stepped {
             steps = List.copyOf(steps);
-            if (steps.isEmpty())
-                throw new IllegalArgumentException("Stepped movement needs at least one step");
+            if (steps.isEmpty()) throw new IllegalArgumentException("Stepped movement needs at least one step");
         }
 
         public int stepCount() {

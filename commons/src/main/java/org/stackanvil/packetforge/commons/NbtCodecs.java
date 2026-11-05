@@ -17,8 +17,7 @@ public final class NbtCodecs {
     public static final PacketCodec<NbtTag> TAG = tag(2_097_152, 512, false);
     public static final PacketCodec<NbtTag> TRUSTED_TAG = tag(Integer.MAX_VALUE, 512, false);
     public static final PacketCodec<NbtTag.Compound> COMPOUND = compound(2_097_152, 512, false);
-    public static final PacketCodec<NbtTag.Compound> NULLABLE_COMPOUND =
-            compound(2_097_152, 512, true);
+    public static final PacketCodec<NbtTag.Compound> NULLABLE_COMPOUND = compound(2_097_152, 512, true);
     public static final PacketCodec<Optional<NbtTag.Compound>> OPTIONAL_COMPOUND =
             WireCodecs.mapped(NULLABLE_COMPOUND, Optional::ofNullable, v -> v.orElse(null));
 
@@ -29,8 +28,7 @@ public final class NbtCodecs {
                 v -> v.orElse(NbtTag.End.INSTANCE));
     }
 
-    public static PacketCodec<NbtTag.Compound> compound(
-            int maxBytes, int maxDepth, boolean nullable) {
+    public static PacketCodec<NbtTag.Compound> compound(int maxBytes, int maxDepth, boolean nullable) {
         PacketCodec<NbtTag> codec = tag(maxBytes, maxDepth, nullable);
         return WireCodecs.mapped(
                 codec,
@@ -48,8 +46,7 @@ public final class NbtCodecs {
         return WireCodecs.of(
                 b -> {
                     int type = b.readUnsignedByte();
-                    if (type == 0 && !endAllowed)
-                        throw new IllegalArgumentException("Unexpected end tag");
+                    if (type == 0 && !endAllowed) throw new IllegalArgumentException("Unexpected end tag");
                     return read(b, type, new Budget(maxBytes, maxDepth), 0);
                 },
                 (b, value) -> {
@@ -191,13 +188,11 @@ public final class NbtCodecs {
                 for (var entry : value.values()) write(b, entry, budget, depth + 1);
             }
             case NbtTag.Compound value -> {
-                value.values()
-                        .forEach(
-                                (name, entry) -> {
-                                    b.writeByte(entry.type());
-                                    writeUtf(b, name, budget, depth);
-                                    write(b, entry, budget, depth + 1);
-                                });
+                value.values().forEach((name, entry) -> {
+                    b.writeByte(entry.type());
+                    writeUtf(b, name, budget, depth);
+                    write(b, entry, budget, depth + 1);
+                });
                 b.writeByte(0);
             }
             case NbtTag.IntArray value -> {

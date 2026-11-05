@@ -41,8 +41,7 @@ final class StaticCodecResolver {
 
     Value resolve(Value value) {
         Expression expression = value.expression();
-        if (expression instanceof EnclosedExpr enclosed)
-            return resolve(value.child(enclosed.getInner()));
+        if (expression instanceof EnclosedExpr enclosed) return resolve(value.child(enclosed.getInner()));
         if (expression instanceof NameExpr name) {
             if (value.variables().containsKey(name.getNameAsString()))
                 return resolve(value.variables().get(name.getNameAsString()));
@@ -51,17 +50,11 @@ final class StaticCodecResolver {
         if (expression instanceof ThisExpr && value.variables().containsKey("$this"))
             return value.variables().get("$this");
         if (expression instanceof FieldAccessExpr access) {
-            if (access.getScope() instanceof ThisExpr)
-                return resolve(field(value, access.getNameAsString()));
-            if (access.getScope() instanceof NameExpr name
-                    && value.variables().containsKey(name.getNameAsString()))
-                return resolve(
-                        member(
-                                value.variables().get(name.getNameAsString()),
-                                access.getNameAsString()));
-            var source =
-                    analyzer.index.source(
-                            analyzer.index.resolve(access.getScope().toString(), value.source()));
+            if (access.getScope() instanceof ThisExpr) return resolve(field(value, access.getNameAsString()));
+            if (access.getScope() instanceof NameExpr name && value.variables().containsKey(name.getNameAsString()))
+                return resolve(member(value.variables().get(name.getNameAsString()), access.getNameAsString()));
+            var source = analyzer.index.source(
+                    analyzer.index.resolve(access.getScope().toString(), value.source()));
             return resolve(field(new Value(access, source), access.getNameAsString()));
         }
         return value;
@@ -74,32 +67,19 @@ final class StaticCodecResolver {
             if (local instanceof FieldDeclaration field)
                 for (var variable : field.getVariables())
                     if (variable.getNameAsString().equals(name))
-                        return value.child(
-                                variable.getInitializer()
-                                        .orElseThrow(
-                                                () ->
-                                                        new Unsupported(
-                                                                "Uninitialized codec field: "
-                                                                        + name)));
-        var field =
-                value.source()
-                        .declaration()
-                        .getFieldByName(name)
-                        .orElseThrow(
-                                () ->
-                                        new Unsupported(
-                                                "Missing static codec value: "
-                                                        + value.source().name()
-                                                        + "."
-                                                        + name));
-        var variable =
-                field.getVariables().stream()
-                        .filter(v -> v.getNameAsString().equals(name))
-                        .findFirst()
-                        .orElseThrow();
+                        return value.child(variable.getInitializer()
+                                .orElseThrow(() -> new Unsupported("Uninitialized codec field: " + name)));
+        var field = value.source()
+                .declaration()
+                .getFieldByName(name)
+                .orElseThrow(() -> new Unsupported(
+                        "Missing static codec value: " + value.source().name() + "." + name));
+        var variable = field.getVariables().stream()
+                .filter(v -> v.getNameAsString().equals(name))
+                .findFirst()
+                .orElseThrow();
         return value.child(
-                variable.getInitializer()
-                        .orElseThrow(() -> new Unsupported("Uninitialized codec field: " + name)));
+                variable.getInitializer().orElseThrow(() -> new Unsupported("Uninitialized codec field: " + name)));
     }
 
     private Value member(Value receiver, String name) {
@@ -110,8 +90,7 @@ final class StaticCodecResolver {
     private Value object(Value receiver) {
         Value value = resolve(receiver);
         if (!(value.expression() instanceof ObjectCreationExpr created))
-            throw new Unsupported(
-                    "Codec accessor receiver is not a static object: " + value.expression());
+            throw new Unsupported("Codec accessor receiver is not a static object: " + value.expression());
         if (created.getAnonymousClassBody().isPresent())
             return new Value(
                     created,
@@ -119,16 +98,10 @@ final class StaticCodecResolver {
                     withThis(value),
                     List.copyOf(created.getAnonymousClassBody().get()));
         var owner =
-                analyzer.index.source(
-                        analyzer.index.resolve(
-                                created.getType().getNameWithScope(), value.source()));
+                analyzer.index.source(analyzer.index.resolve(created.getType().getNameWithScope(), value.source()));
         Map<String, Value> variables = new HashMap<>();
         variables.put("$this", value);
-        bindConstructor(
-                owner,
-                created.getArguments().stream().map(value::child).toList(),
-                variables,
-                new HashSet<>());
+        bindConstructor(owner, created.getArguments().stream().map(value::child).toList(), variables, new HashSet<>());
         return new Value(created, owner, variables, List.of());
     }
 
@@ -139,12 +112,8 @@ final class StaticCodecResolver {
     }
 
     private void bindConstructor(
-            SourceIndex.Source owner,
-            List<Value> arguments,
-            Map<String, Value> fields,
-            Set<String> visited) {
-        if (!visited.add(owner.name() + ":" + arguments.size()))
-            throw new Unsupported("Recursive codec constructor");
+            SourceIndex.Source owner, List<Value> arguments, Map<String, Value> fields, Set<String> visited) {
+        if (!visited.add(owner.name() + ":" + arguments.size())) throw new Unsupported("Recursive codec constructor");
         if (owner.declaration() instanceof RecordDeclaration record) {
             if (record.getParameters().size() != arguments.size())
                 throw new Unsupported("Codec record constructor arity differs");
@@ -152,17 +121,13 @@ final class StaticCodecResolver {
                 fields.put("$field:" + record.getParameter(i).getNameAsString(), arguments.get(i));
             return;
         }
-        var constructors =
-                owner.declaration().getMembers().stream()
-                        .filter(
-                                m ->
-                                        m instanceof ConstructorDeclaration c
-                                                && c.getParameters().size() == arguments.size())
-                        .map(m -> (ConstructorDeclaration) m)
-                        .toList();
+        var constructors = owner.declaration().getMembers().stream()
+                .filter(m -> m instanceof ConstructorDeclaration c
+                        && c.getParameters().size() == arguments.size())
+                .map(m -> (ConstructorDeclaration) m)
+                .toList();
         if (constructors.isEmpty() && arguments.isEmpty()) return;
-        if (constructors.size() != 1)
-            throw new Unsupported("Ambiguous static codec constructor: " + owner.name());
+        if (constructors.size() != 1) throw new Unsupported("Ambiguous static codec constructor: " + owner.name());
         var constructor = constructors.getFirst();
         Map<String, Value> variables = new HashMap<>(fields);
         for (int i = 0; i < arguments.size(); i++)
@@ -174,11 +139,8 @@ final class StaticCodecResolver {
                     if (!(owner.declaration() instanceof ClassOrInterfaceDeclaration clazz)
                             || clazz.getExtendedTypes().size() != 1)
                         throw new Unsupported("Unknown codec superclass constructor");
-                    parent =
-                            analyzer.index.source(
-                                    analyzer.index.resolve(
-                                            clazz.getExtendedTypes().get(0).getNameWithScope(),
-                                            owner));
+                    parent = analyzer.index.source(analyzer.index.resolve(
+                            clazz.getExtendedTypes().get(0).getNameWithScope(), owner));
                 }
                 bindConstructor(
                         parent,
@@ -194,8 +156,7 @@ final class StaticCodecResolver {
                     && target.getScope() instanceof ThisExpr)
                 fields.put(
                         "$field:" + target.getNameAsString(),
-                        new Value(
-                                assignment.getValue(), owner, new HashMap<>(variables), List.of()));
+                        new Value(assignment.getValue(), owner, new HashMap<>(variables), List.of()));
         }
     }
 
@@ -209,38 +170,28 @@ final class StaticCodecResolver {
         Value object = object(receiver);
         if (object.source().declaration() instanceof RecordDeclaration record
                 && record.getParameters().stream()
-                        .anyMatch(p -> p.getNameAsString().equals(method)))
-            return member(receiver, method);
-        var methods =
-                object.locals().stream()
-                        .filter(
-                                m ->
-                                        m instanceof MethodDeclaration d
-                                                && d.getNameAsString().equals(method))
-                        .map(m -> (MethodDeclaration) m)
-                        .toList();
+                        .anyMatch(p -> p.getNameAsString().equals(method))) return member(receiver, method);
+        var methods = object.locals().stream()
+                .filter(m ->
+                        m instanceof MethodDeclaration d && d.getNameAsString().equals(method))
+                .map(m -> (MethodDeclaration) m)
+                .toList();
         if (methods.isEmpty())
-            methods =
-                    object.source().declaration().getMethodsByName(method).stream()
-                            .filter(m -> m.getParameters().isEmpty())
-                            .toList();
+            methods = object.source().declaration().getMethodsByName(method).stream()
+                    .filter(m -> m.getParameters().isEmpty())
+                    .toList();
         SourceIndex.Source methodOwner = object.source();
         while (methods.isEmpty()
                 && methodOwner.declaration() instanceof ClassOrInterfaceDeclaration clazz
                 && clazz.getExtendedTypes().size() == 1) {
-            methodOwner =
-                    analyzer.index.source(
-                            analyzer.index.resolve(
-                                    clazz.getExtendedTypes().get(0).getNameWithScope(),
-                                    methodOwner));
-            methods =
-                    methodOwner.declaration().getMethodsByName(method).stream()
-                            .filter(m -> m.getParameters().isEmpty())
-                            .toList();
+            methodOwner = analyzer.index.source(
+                    analyzer.index.resolve(clazz.getExtendedTypes().get(0).getNameWithScope(), methodOwner));
+            methods = methodOwner.declaration().getMethodsByName(method).stream()
+                    .filter(m -> m.getParameters().isEmpty())
+                    .toList();
         }
         if (methods.size() != 1) throw new Unsupported("Ambiguous codec accessor: " + method);
-        return returned(
-                methods.getFirst(), methodOwner, object.variables(), object.locals(), List.of());
+        return returned(methods.getFirst(), methodOwner, object.variables(), object.locals(), List.of());
     }
 
     private Value componentCodec(Value value) {
@@ -250,9 +201,7 @@ final class StaticCodecResolver {
                 && apply.getArguments().size() == 1
                 && apply.getScope().isPresent())
             return componentCodec(
-                    invoke(
-                            target.child(apply.getScope().get()),
-                            List.of(target.child(apply.getArgument(0)))));
+                    invoke(target.child(apply.getScope().get()), List.of(target.child(apply.getArgument(0)))));
         Value network = null, persistent = null;
         while (target.expression() instanceof MethodCallExpr call) {
             String method = call.getNameAsString();
@@ -263,17 +212,11 @@ final class StaticCodecResolver {
             } else if (Set.of("cacheEncoding", "ignoreSwapAnimation").contains(method)
                     && call.getArguments().isEmpty()) {
             } else if (method.equals("builder")
-                    && call.getScope()
-                            .map(Object::toString)
-                            .orElse("")
-                            .equals("DataComponentType")) {
+                    && call.getScope().map(Object::toString).orElse("").equals("DataComponentType")) {
                 if (network != null) return network;
                 if (persistent != null)
-                    return persistent.child(
-                            new MethodCallExpr(
-                                            new NameExpr("ByteBufCodecs"),
-                                            "fromCodecWithRegistries")
-                                    .addArgument(persistent.expression().clone()));
+                    return persistent.child(new MethodCallExpr(new NameExpr("ByteBufCodecs"), "fromCodecWithRegistries")
+                            .addArgument(persistent.expression().clone()));
                 throw new Unsupported("Component has no persistent or network codec");
             } else throw new Unsupported("Unknown component builder operation: " + method);
             target = resolve(target.child(call.getScope().orElseThrow()));
@@ -284,15 +227,12 @@ final class StaticCodecResolver {
     Value invoke(Value function, List<Value> arguments) {
         Value target = resolve(function);
         if (target.expression() instanceof MethodReferenceExpr reference) {
-            var source =
-                    analyzer.index.source(
-                            analyzer.index.resolve(
-                                    reference.getScope().toString(), target.source()));
+            var source = analyzer.index.source(
+                    analyzer.index.resolve(reference.getScope().toString(), target.source()));
             return invokeMethod(source, reference.getIdentifier(), arguments);
         }
         if (target.expression() instanceof LambdaExpr lambda) {
-            if (lambda.getParameters().size() != arguments.size()
-                    || !(lambda.getBody() instanceof ExpressionStmt body))
+            if (lambda.getParameters().size() != arguments.size() || !(lambda.getBody() instanceof ExpressionStmt body))
                 throw new Unsupported("Complex codec factory lambda");
             Map<String, Value> variables = new HashMap<>(target.variables());
             for (int i = 0; i < arguments.size(); i++)
@@ -303,52 +243,38 @@ final class StaticCodecResolver {
     }
 
     Wire factory(MethodCallExpr call, SourceIndex.Source source) {
-        var owner =
-                analyzer.index.source(
-                        analyzer.index.resolve(call.getScope().orElseThrow().toString(), source));
-        var candidates =
-                owner.declaration().getMethodsByName(call.getNameAsString()).stream()
-                        .filter(
-                                m ->
-                                        m.isStatic()
-                                                && m.getTypeAsString().contains("StreamCodec")
-                                                && m.getParameters().size()
-                                                        == call.getArguments().size())
-                        .toList();
+        var owner = analyzer.index.source(
+                analyzer.index.resolve(call.getScope().orElseThrow().toString(), source));
+        var candidates = owner.declaration().getMethodsByName(call.getNameAsString()).stream()
+                .filter(m -> m.isStatic()
+                        && m.getTypeAsString().contains("StreamCodec")
+                        && m.getParameters().size() == call.getArguments().size())
+                .toList();
         if (candidates.size() != 1)
             throw new Unsupported(
-                    "No unambiguous static codec factory: "
-                            + owner.name()
-                            + "."
-                            + call.getNameAsString());
-        return codec(
-                returned(
-                        candidates.getFirst(),
-                        owner,
-                        Map.of(),
-                        List.of(),
-                        call.getArguments().stream().map(e -> new Value(e, source)).toList()));
+                    "No unambiguous static codec factory: " + owner.name() + "." + call.getNameAsString());
+        return codec(returned(
+                candidates.getFirst(),
+                owner,
+                Map.of(),
+                List.of(),
+                call.getArguments().stream().map(e -> new Value(e, source)).toList()));
     }
 
     private Value invokeMethod(SourceIndex.Source source, String method, List<Value> arguments) {
-        var candidates =
-                source.declaration().getMethodsByName(method).stream()
-                        .filter(
-                                m ->
-                                        m.getParameters().size() == arguments.size()
-                                                && m.getBody().isPresent())
-                        .toList();
+        var candidates = source.declaration().getMethodsByName(method).stream()
+                .filter(m -> m.getParameters().size() == arguments.size()
+                        && m.getBody().isPresent())
+                .toList();
         if (candidates.isEmpty()
                 && source.declaration() instanceof ClassOrInterfaceDeclaration clazz
                 && clazz.getExtendedTypes().size() == 1)
             return invokeMethod(
-                    analyzer.index.source(
-                            analyzer.index.resolve(
-                                    clazz.getExtendedTypes().get(0).getNameWithScope(), source)),
+                    analyzer.index.source(analyzer.index.resolve(
+                            clazz.getExtendedTypes().get(0).getNameWithScope(), source)),
                     method,
                     arguments);
-        if (candidates.size() != 1)
-            throw new Unsupported("Ambiguous codec factory: " + source.name() + "." + method);
+        if (candidates.size() != 1) throw new Unsupported("Ambiguous codec factory: " + source.name() + "." + method);
         return returned(candidates.getFirst(), source, Map.of(), List.of(), arguments);
     }
 
@@ -368,18 +294,12 @@ final class StaticCodecResolver {
                     variables.put(
                             variable.getNameAsString(),
                             new Value(
-                                    variable.getInitializer().orElseThrow(),
-                                    source,
-                                    new HashMap<>(variables),
-                                    locals));
+                                    variable.getInitializer().orElseThrow(), source, new HashMap<>(variables), locals));
             else if (statement instanceof ReturnStmt returned)
                 return new Value(returned.getExpression().orElseThrow(), source, variables, locals);
             else
                 throw new Unsupported(
-                        "Codec factory contains control flow: "
-                                + source.name()
-                                + "."
-                                + method.getNameAsString());
+                        "Codec factory contains control flow: " + source.name() + "." + method.getNameAsString());
         }
         throw new Unsupported("Codec factory does not return a value");
     }
@@ -394,20 +314,16 @@ final class StaticCodecResolver {
             Value registry = target.child(call.getArgument(0));
             String key = registryKey(registry);
             return new Registration(
-                    key,
-                    identifier(target.child(call.getArgument(1))),
-                    target.child(call.getArgument(2)));
+                    key, identifier(target.child(call.getArgument(1))), target.child(call.getArgument(2)));
         }
         try {
-            SourceIndex.Source source =
-                    scope.isEmpty()
-                            ? target.source()
-                            : analyzer.index.source(analyzer.index.resolve(scope, target.source()));
-            return registration(
-                    invokeMethod(
-                            source,
-                            call.getNameAsString(),
-                            call.getArguments().stream().map(target::child).toList()));
+            SourceIndex.Source source = scope.isEmpty()
+                    ? target.source()
+                    : analyzer.index.source(analyzer.index.resolve(scope, target.source()));
+            return registration(invokeMethod(
+                    source,
+                    call.getNameAsString(),
+                    call.getArguments().stream().map(target::child).toList()));
         } catch (Unsupported unknown) {
             return null;
         }
@@ -415,39 +331,29 @@ final class StaticCodecResolver {
 
     String registryKey(Value value) {
         Expression expression = value.expression();
-        if (expression instanceof NameExpr name
-                && value.variables().containsKey(name.getNameAsString()))
+        if (expression instanceof NameExpr name && value.variables().containsKey(name.getNameAsString()))
             return registryKey(value.variables().get(name.getNameAsString()));
         if (expression instanceof FieldAccessExpr field
-                && field.getScope().toString().endsWith("BuiltInRegistries"))
-            return field.getNameAsString();
+                && field.getScope().toString().endsWith("BuiltInRegistries")) return field.getNameAsString();
         throw new Unsupported("Registry is not a bound built-in registry: " + expression);
     }
 
     String identifier(Value value) {
         Expression expression = value.expression();
         if (expression instanceof StringLiteralExpr string)
-            return string.asString().contains(":")
-                    ? string.asString()
-                    : "minecraft:" + string.asString();
-        if (expression instanceof NameExpr name
-                && value.variables().containsKey(name.getNameAsString()))
+            return string.asString().contains(":") ? string.asString() : "minecraft:" + string.asString();
+        if (expression instanceof NameExpr name && value.variables().containsKey(name.getNameAsString()))
             return identifier(value.variables().get(name.getNameAsString()));
         if (expression instanceof MethodCallExpr call
                 && call.getScope().map(Object::toString).orElse("").equals("Identifier")
                 && Set.of("withDefaultNamespace", "parse").contains(call.getNameAsString())
-                && call.getArguments().size() == 1)
-            return identifier(value.child(call.getArgument(0)));
+                && call.getArguments().size() == 1) return identifier(value.child(call.getArgument(0)));
         throw new Unsupported("Registry entry name is not a static identifier: " + expression);
     }
 
     Wire codec(Value value) {
         String token =
-                value.source().name()
-                        + ":"
-                        + value.expression()
-                        + ":"
-                        + System.identityHashCode(value.variables());
+                value.source().name() + ":" + value.expression() + ":" + System.identityHashCode(value.variables());
         if (!active.add(token)) throw new Unsupported("Recursive static codec factory");
         try {
             return codecValue(value);
@@ -458,27 +364,22 @@ final class StaticCodecResolver {
 
     private Wire codecValue(Value value) {
         Expression expression = value.expression();
-        if (expression instanceof NullLiteralExpr)
-            throw new Rejected("Source codec requires a non-null payload codec");
-        if (expression instanceof NameExpr name
-                && value.variables().containsKey(name.getNameAsString()))
+        if (expression instanceof NullLiteralExpr) throw new Rejected("Source codec requires a non-null payload codec");
+        if (expression instanceof NameExpr name && value.variables().containsKey(name.getNameAsString()))
             return codec(value.variables().get(name.getNameAsString()));
         if (expression instanceof FieldAccessExpr field && field.getScope() instanceof ThisExpr)
             return codec(field(value, field.getNameAsString()));
         if (expression instanceof FieldAccessExpr field
                 && field.getScope() instanceof NameExpr name
                 && value.variables().containsKey(name.getNameAsString()))
-            return codec(
-                    member(value.variables().get(name.getNameAsString()), field.getNameAsString()));
+            return codec(member(value.variables().get(name.getNameAsString()), field.getNameAsString()));
         if (expression instanceof NameExpr || expression instanceof FieldAccessExpr) {
             boolean bound =
-                    expression instanceof NameExpr name
-                                    && value.variables().containsKey(name.getNameAsString())
+                    expression instanceof NameExpr name && value.variables().containsKey(name.getNameAsString())
                             || expression instanceof FieldAccessExpr access
                                     && (access.getScope() instanceof ThisExpr
                                             || access.getScope() instanceof NameExpr name
-                                                    && value.variables()
-                                                            .containsKey(name.getNameAsString()));
+                                                    && value.variables().containsKey(name.getNameAsString()));
             if (!bound)
                 try {
                     return analyzer.codec(expression, value.source());
@@ -492,10 +393,8 @@ final class StaticCodecResolver {
             }
             return codec(resolved);
         }
-        if (!(expression instanceof MethodCallExpr call))
-            return analyzer.codec(expression, value.source());
-        String scope = call.getScope().map(Object::toString).orElse(""),
-                method = call.getNameAsString();
+        if (!(expression instanceof MethodCallExpr call)) return analyzer.codec(expression, value.source());
+        String scope = call.getScope().map(Object::toString).orElse(""), method = call.getNameAsString();
         if (scope.equals("Objects")
                 && method.equals("requireNonNull")
                 && call.getArguments().size() == 1) return codec(value.child(call.getArgument(0)));
@@ -508,17 +407,16 @@ final class StaticCodecResolver {
                 receiver = resolve(receiver);
             } catch (Unsupported nativeCodec) {
             }
-            if (receiver.expression() instanceof LambdaExpr
-                    || receiver.expression() instanceof MethodReferenceExpr)
-                return codec(
-                        invoke(receiver, call.getArguments().stream().map(value::child).toList()));
+            if (receiver.expression() instanceof LambdaExpr || receiver.expression() instanceof MethodReferenceExpr)
+                return codec(invoke(
+                        receiver, call.getArguments().stream().map(value::child).toList()));
         }
         MethodCallExpr translated = call.clone();
-        if (Set.of("map", "apply", "dispatch").contains(method) && call.getScope().isPresent())
+        if (Set.of("map", "apply", "dispatch").contains(method)
+                && call.getScope().isPresent())
             translated.setScope(analyzer.bind(codec(value.child(call.getScope().get()))));
         boolean nativeBuffer =
-                scope.equals("ByteBufCodecs")
-                        || scope.equals("net.minecraft.network.codec.ByteBufCodecs");
+                scope.equals("ByteBufCodecs") || scope.equals("net.minecraft.network.codec.ByteBufCodecs");
         if (scope.equals("StreamCodec") && method.equals("composite"))
             for (int i = 0; i < call.getArguments().size() - 1; i += 2)
                 translated.setArgument(i, analyzer.bind(codec(value.child(call.getArgument(i)))));
@@ -528,13 +426,11 @@ final class StaticCodecResolver {
                 translated.setArgument(0, analyzer.bind(codec(value.child(call.getArgument(0)))));
             if (method.equals("map") && call.getArguments().size() >= 3)
                 for (int i : new int[] {1, 2})
-                    translated.setArgument(
-                            i, analyzer.bind(codec(value.child(call.getArgument(i)))));
+                    translated.setArgument(i, analyzer.bind(codec(value.child(call.getArgument(i)))));
             if (Set.of("either", "holder").contains(method)) {
                 int first = method.equals("holder") ? 1 : 0;
                 for (int i = first; i < call.getArguments().size(); i++)
-                    translated.setArgument(
-                            i, analyzer.bind(codec(value.child(call.getArgument(i)))));
+                    translated.setArgument(i, analyzer.bind(codec(value.child(call.getArgument(i)))));
             }
             if (Set.of("registry", "holderRegistry").contains(method)
                     && call.getArguments().size() == 1
@@ -549,8 +445,7 @@ final class StaticCodecResolver {
                 if (call.getArgument(i) instanceof NameExpr argument
                         && value.variables().containsKey(argument.getNameAsString())
                         && !Set.of("optional", "map", "holder", "either").contains(method))
-                    translated.setArgument(
-                            i, scalar(value.variables().get(argument.getNameAsString())));
+                    translated.setArgument(i, scalar(value.variables().get(argument.getNameAsString())));
         }
         if (nativeBuffer
                 || Set.of("StreamCodec", "ResourceKey").contains(scope)
@@ -562,15 +457,13 @@ final class StaticCodecResolver {
                 && value.variables().containsKey(variable.getNameAsString()))
             return codec(accessor(value.variables().get(variable.getNameAsString()), method));
         try {
-            var source =
-                    scope.isEmpty()
-                            ? value.source()
-                            : analyzer.index.source(analyzer.index.resolve(scope, value.source()));
-            return codec(
-                    invokeMethod(
-                            source,
-                            method,
-                            call.getArguments().stream().map(value::child).toList()));
+            var source = scope.isEmpty()
+                    ? value.source()
+                    : analyzer.index.source(analyzer.index.resolve(scope, value.source()));
+            return codec(invokeMethod(
+                    source,
+                    method,
+                    call.getArguments().stream().map(value::child).toList()));
         } catch (Unsupported helper) {
             try {
                 return analyzer.codec(expression, value.source());
@@ -581,8 +474,7 @@ final class StaticCodecResolver {
     }
 
     private Expression scalar(Value value) {
-        if (value.expression() instanceof NameExpr name
-                && value.variables().containsKey(name.getNameAsString()))
+        if (value.expression() instanceof NameExpr name && value.variables().containsKey(name.getNameAsString()))
             return scalar(value.variables().get(name.getNameAsString()));
         return value.expression().clone();
     }

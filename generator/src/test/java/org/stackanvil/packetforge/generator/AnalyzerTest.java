@@ -15,28 +15,24 @@ import org.junit.jupiter.api.io.TempDir;
 import org.stackanvil.packetforge.commons.*;
 
 class AnalyzerTest {
-    @TempDir Path temporary;
+    @TempDir
+    Path temporary;
 
     private void source(String name, String body) throws Exception {
-        Path file =
-                temporary.resolve("sources/net/minecraft/network/protocol/game/" + name + ".java");
+        Path file = temporary.resolve("sources/net/minecraft/network/protocol/game/" + name + ".java");
         Files.createDirectories(file.getParent());
         Files.writeString(file, "package net.minecraft.network.protocol.game;\n" + body);
     }
 
     private void fixture() throws Exception {
-        source(
-                "GamePacketTypes",
-                """
+        source("GamePacketTypes", """
             class GamePacketTypes {
                 static final PacketType<BadPacket> BAD = createClientbound("bad");
                 static final PacketType<TestPacket> TEST = createClientbound("test");
                 static final PacketType<DelimiterPacket> DELIMITER = createClientbound("bundle_delimiter");
             }
             """);
-        source(
-                "GameProtocols",
-                """
+        source("GameProtocols", """
             class GameProtocols {
                 static final Object CLIENTBOUND_TEMPLATE = ProtocolInfoBuilder.clientboundProtocol(ConnectionProtocol.PLAY,
                     b -> b.withBundlePacket(GamePacketTypes.BUNDLE, BundlePacket::new, new DelimiterPacket())
@@ -44,25 +40,19 @@ class AnalyzerTest {
                         .addPacket(GamePacketTypes.TEST, TestPacket.STREAM_CODEC));
             }
             """);
-        source(
-                "DelimiterPacket",
-                """
+        source("DelimiterPacket", """
             class DelimiterPacket implements Packet<Listener> {
                 PacketType<DelimiterPacket> type() { return GamePacketTypes.DELIMITER; }
             }
             """);
-        source(
-                "TestPacket",
-                """
+        source("TestPacket", """
             record TestPacket(String text, int number) implements Packet<Listener> {
                 static final StreamCodec<FriendlyByteBuf, TestPacket> STREAM_CODEC = Packet.codec(TestPacket::write, TestPacket::new);
                 TestPacket(FriendlyByteBuf in) { this(in.readUtf(16), in.readVarInt()); }
                 void write(FriendlyByteBuf out) { out.writeUtf(this.text); out.writeVarInt(this.number); }
             }
             """);
-        source(
-                "BadPacket",
-                """
+        source("BadPacket", """
             class BadPacket implements Packet<Listener> {
                 static final StreamCodec<FriendlyByteBuf, BadPacket> STREAM_CODEC = Packet.codec(BadPacket::write, BadPacket::new);
                 int number;
@@ -75,8 +65,7 @@ class AnalyzerTest {
     @Test
     void recoversEnumConstructorDecodersAndRejectsAnInconsistentTypeGetter() throws Exception {
         fixture();
-        String body =
-                """
+        String body = """
             class TestPacket implements Packet<Listener> {
                 static final Object STREAM_CODEC = Packet.codec(TestPacket::write, TestPacket::new);
                 final int id;
@@ -118,18 +107,14 @@ class AnalyzerTest {
                 analyzer.dispatches.values().iterator().next().cases().stream()
                         .map(Analyzer.DispatchCase::key)
                         .toList());
-        source(
-                "TestPacket",
-                body.replace("return TestPacket.Kind.SECOND", "return TestPacket.Kind.FIRST"));
+        source("TestPacket", body.replace("return TestPacket.Kind.SECOND", "return TestPacket.Kind.FIRST"));
         assertFalse(new Analyzer(temporary.resolve("sources")).analyze().get(2).supported());
     }
 
     @Test
-    void optionalGetterProjectionFollowsInterfacesAndRequiresAConcreteDirectAccessor()
-            throws Exception {
+    void optionalGetterProjectionFollowsInterfacesAndRequiresAConcreteDirectAccessor() throws Exception {
         fixture();
-        String body =
-                """
+        String body = """
             import net.minecraft.resources.Identifier;
             class TestPacket implements Packet<Listener> {
                 static final Object STREAM_CODEC = Packet.codec(TestPacket::write, TestPacket::new);
@@ -166,72 +151,58 @@ class AnalyzerTest {
         Analyzer analyzer = new Analyzer(temporary.resolve("sources"));
         var registrations = analyzer.analyze();
         assertEquals(
-                List.of(0, 1, 2), registrations.stream().map(Analyzer.Registration::id).toList());
+                List.of(0, 1, 2),
+                registrations.stream().map(Analyzer.Registration::id).toList());
         assertEquals(
                 List.of(true, false, true),
                 registrations.stream().map(Analyzer.Registration::supported).toList());
         assertTrue(registrations.get(1).reason().contains("control flow"));
         assertEquals("minecraft:test", registrations.get(2).name());
-        var report =
-                new Emitter()
-                        .emit(
-                                temporary.resolve("generated"),
-                                Map.of("version", "fixture"),
-                                777,
-                                registrations,
-                                analyzer.models);
+        var report = new Emitter()
+                .emit(
+                        temporary.resolve("generated"),
+                        Map.of("version", "fixture"),
+                        777,
+                        registrations,
+                        analyzer.models);
         assertEquals(2, report.generatedRegistrations());
         var compiler = ToolProvider.getSystemJavaCompiler();
         Path classes = temporary.resolve("classes");
         Files.createDirectories(classes);
-        String classpath =
-                String.join(
-                        java.io.File.pathSeparator,
-                        List.of(Packet.class, ByteBuf.class, io.netty.util.ReferenceCounted.class)
-                                .stream()
-                                .map(
-                                        c ->
-                                                Path.of(
-                                                                java.net.URI.create(
-                                                                        c.getProtectionDomain()
-                                                                                .getCodeSource()
-                                                                                .getLocation()
-                                                                                .toString()))
-                                                        .toString())
-                                .toList());
+        String classpath = String.join(
+                java.io.File.pathSeparator,
+                List.of(Packet.class, ByteBuf.class, io.netty.util.ReferenceCounted.class).stream()
+                        .map(c -> Path.of(java.net.URI.create(c.getProtectionDomain()
+                                        .getCodeSource()
+                                        .getLocation()
+                                        .toString()))
+                                .toString())
+                        .toList());
         try (var manager = compiler.getStandardFileManager(null, null, null);
                 var files = Files.walk(temporary.resolve("generated/java"))) {
-            var inputs =
-                    manager.getJavaFileObjectsFromPaths(
-                            files.filter(p -> p.toString().endsWith(".java")).toList());
-            assertTrue(
-                    compiler.getTask(
-                                    null,
-                                    manager,
-                                    null,
-                                    List.of("-classpath", classpath, "-d", classes.toString()),
-                                    null,
-                                    inputs)
-                            .call());
+            var inputs = manager.getJavaFileObjectsFromPaths(
+                    files.filter(p -> p.toString().endsWith(".java")).toList());
+            assertTrue(compiler.getTask(
+                            null,
+                            manager,
+                            null,
+                            List.of("-classpath", classpath, "-d", classes.toString()),
+                            null,
+                            inputs)
+                    .call());
         }
-        try (URLClassLoader loader =
-                new URLClassLoader(
-                        new java.net.URL[] {classes.toUri().toURL()},
-                        getClass().getClassLoader())) {
+        try (URLClassLoader loader = new URLClassLoader(
+                new java.net.URL[] {classes.toUri().toURL()}, getClass().getClassLoader())) {
             PacketRegistry registry =
-                    (PacketRegistry)
-                            loader.loadClass(
-                                            "org.stackanvil.packetforge.protocol.GeneratedProtocol")
-                                    .getMethod("registry")
-                                    .invoke(null);
+                    (PacketRegistry) loader.loadClass("org.stackanvil.packetforge.protocol.GeneratedProtocol")
+                            .getMethod("registry")
+                            .invoke(null);
             ByteBuf data = Unpooled.buffer();
             try {
                 data.writeByte(2);
                 WireCodecs.STRING.encode(data, "hello");
                 WireCodecs.VAR_INT.encode(data, -1);
-                Packet packet =
-                        registry.decode(
-                                PacketRegistry.State.PLAY, PacketRegistry.Flow.CLIENTBOUND, data);
+                Packet packet = registry.decode(PacketRegistry.State.PLAY, PacketRegistry.Flow.CLIENTBOUND, data);
                 assertEquals("hello", packet.getClass().getMethod("text").invoke(packet));
                 assertEquals(-1, packet.getClass().getMethod("number").invoke(packet));
             } finally {
@@ -243,9 +214,7 @@ class AnalyzerTest {
     @Test
     void rejectsReaderWriterMismatchAndPreservesExplicitNarrowingTransforms() throws Exception {
         fixture();
-        source(
-                "TestPacket",
-                """
+        source("TestPacket", """
             record TestPacket(int value) implements Packet<Listener> {
                 static final StreamCodec<FriendlyByteBuf, TestPacket> STREAM_CODEC = Packet.codec(TestPacket::write, TestPacket::new);
                 TestPacket(FriendlyByteBuf in) { this(in.readVarInt()); }
@@ -255,9 +224,7 @@ class AnalyzerTest {
         var entries = new Analyzer(temporary.resolve("sources")).analyze();
         assertFalse(entries.get(2).supported());
         assertTrue(entries.get(2).reason().contains("wire types differ"));
-        source(
-                "TestPacket",
-                """
+        source("TestPacket", """
             record TestPacket(byte value) implements Packet<Listener> {
                 static final StreamCodec<FriendlyByteBuf, TestPacket> STREAM_CODEC = Packet.codec(TestPacket::write, TestPacket::new);
                 TestPacket(FriendlyByteBuf in) { this((byte) in.readVarInt()); }
@@ -268,47 +235,38 @@ class AnalyzerTest {
         var registrations = narrowed.analyze();
         assertTrue(registrations.get(2).supported(), registrations.get(2).reason());
         Path generated = temporary.resolve("narrowed");
-        new Emitter()
-                .emit(generated, Map.of("version", "fixture"), 777, registrations, narrowed.models);
+        new Emitter().emit(generated, Map.of("version", "fixture"), 777, registrations, narrowed.models);
         var compiler = ToolProvider.getSystemJavaCompiler();
         Path classes = temporary.resolve("narrowed-classes");
         Files.createDirectories(classes);
-        String classpath =
-                String.join(
-                        java.io.File.pathSeparator,
-                        List.of(Packet.class, ByteBuf.class, io.netty.util.ReferenceCounted.class)
-                                .stream()
-                                .map(
-                                        c ->
-                                                Path.of(
-                                                                java.net.URI.create(
-                                                                        c.getProtectionDomain()
-                                                                                .getCodeSource()
-                                                                                .getLocation()
-                                                                                .toString()))
-                                                        .toString())
-                                .toList());
+        String classpath = String.join(
+                java.io.File.pathSeparator,
+                List.of(Packet.class, ByteBuf.class, io.netty.util.ReferenceCounted.class).stream()
+                        .map(c -> Path.of(java.net.URI.create(c.getProtectionDomain()
+                                        .getCodeSource()
+                                        .getLocation()
+                                        .toString()))
+                                .toString())
+                        .toList());
         try (var manager = compiler.getStandardFileManager(null, null, null);
                 var files = Files.walk(generated.resolve("java"))) {
-            assertTrue(
-                    compiler.getTask(
-                                    null,
-                                    manager,
-                                    null,
-                                    List.of("-classpath", classpath, "-d", classes.toString()),
-                                    null,
-                                    manager.getJavaFileObjectsFromPaths(
-                                            files.filter(p -> p.toString().endsWith(".java"))
-                                                    .toList()))
-                            .call());
+            assertTrue(compiler.getTask(
+                            null,
+                            manager,
+                            null,
+                            List.of("-classpath", classpath, "-d", classes.toString()),
+                            null,
+                            manager.getJavaFileObjectsFromPaths(
+                                    files.filter(p -> p.toString().endsWith(".java"))
+                                            .toList()))
+                    .call());
         }
-        try (URLClassLoader loader =
-                new URLClassLoader(
-                        new java.net.URL[] {classes.toUri().toURL()},
-                        getClass().getClassLoader())) {
+        try (URLClassLoader loader = new URLClassLoader(
+                new java.net.URL[] {classes.toUri().toURL()}, getClass().getClassLoader())) {
             Class<?> type = loader.loadClass(registrations.get(2).generatedClass());
             @SuppressWarnings("unchecked")
-            PacketCodec<Object> codec = (PacketCodec<Object>) type.getField("CODEC").get(null);
+            PacketCodec<Object> codec =
+                    (PacketCodec<Object>) type.getField("CODEC").get(null);
             ByteBuf input = Unpooled.buffer(), output = Unpooled.buffer();
             try {
                 WireCodecs.VAR_INT.encode(input, 255);

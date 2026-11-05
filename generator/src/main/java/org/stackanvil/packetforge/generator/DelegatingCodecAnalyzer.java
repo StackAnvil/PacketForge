@@ -20,24 +20,17 @@ final class DelegatingCodecAnalyzer {
 
     Lowered lower(ObjectCreationExpr codec, SourceIndex.Source source) {
         var members = codec.getAnonymousClassBody().orElseThrow();
-        var readers =
-                members.stream()
-                        .filter(
-                                m ->
-                                        m instanceof MethodDeclaration d
-                                                && d.getNameAsString().equals("decode"))
-                        .map(m -> (MethodDeclaration) m)
-                        .toList();
-        var writers =
-                members.stream()
-                        .filter(
-                                m ->
-                                        m instanceof MethodDeclaration d
-                                                && d.getNameAsString().equals("encode"))
-                        .map(m -> (MethodDeclaration) m)
-                        .toList();
-        if (readers.size() != 1 || writers.size() != 1)
-            throw new Unsupported("Not a forwarding stream codec");
+        var readers = members.stream()
+                .filter(m ->
+                        m instanceof MethodDeclaration d && d.getNameAsString().equals("decode"))
+                .map(m -> (MethodDeclaration) m)
+                .toList();
+        var writers = members.stream()
+                .filter(m ->
+                        m instanceof MethodDeclaration d && d.getNameAsString().equals("encode"))
+                .map(m -> (MethodDeclaration) m)
+                .toList();
+        if (readers.size() != 1 || writers.size() != 1) throw new Unsupported("Not a forwarding stream codec");
         var reader = readers.getFirst();
         var writer = writers.getFirst();
         String decodeFailure = "";
@@ -97,13 +90,9 @@ final class DelegatingCodecAnalyzer {
         var resolver = new StaticCodecResolver(analyzer);
         var local = List.copyOf(members);
         Wire read =
-                resolver.codec(
-                        new StaticCodecResolver.Value(
-                                decode.getScope().orElseThrow(), source, Map.of(), local));
+                resolver.codec(new StaticCodecResolver.Value(decode.getScope().orElseThrow(), source, Map.of(), local));
         Wire write =
-                resolver.codec(
-                        new StaticCodecResolver.Value(
-                                encode.getScope().orElseThrow(), source, Map.of(), local));
+                resolver.codec(new StaticCodecResolver.Value(encode.getScope().orElseThrow(), source, Map.of(), local));
         if (!read.shape().startsWith("model:") || !write.shape().startsWith("model:"))
             throw new Unsupported("Forwarding codecs do not construct record layouts");
         var readModel = analyzer.models.get(read.shape().substring(6));

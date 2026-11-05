@@ -95,8 +95,7 @@ public sealed interface NbtTag {
             if (elementType < 0 || elementType > 12 || elementType == 0 && !values.isEmpty())
                 throw new IllegalArgumentException("Invalid NBT list type");
             for (NbtTag tag : values)
-                if (tag.type() != elementType)
-                    throw new IllegalArgumentException("NBT list contains mixed wire types");
+                if (tag.type() != elementType) throw new IllegalArgumentException("NBT list contains mixed wire types");
         }
 
         public int type() {
@@ -107,13 +106,11 @@ public sealed interface NbtTag {
     record Compound(Map<String, NbtTag> values) implements NbtTag {
         public Compound {
             values = Collections.unmodifiableMap(new LinkedHashMap<>(values));
-            values.forEach(
-                    (key, value) -> {
-                        Objects.requireNonNull(key);
-                        Objects.requireNonNull(value);
-                        if (value.type() == 0)
-                            throw new IllegalArgumentException("Compound contains an end tag");
-                    });
+            values.forEach((key, value) -> {
+                Objects.requireNonNull(key);
+                Objects.requireNonNull(value);
+                if (value.type() == 0) throw new IllegalArgumentException("Compound contains an end tag");
+            });
         }
 
         public int type() {

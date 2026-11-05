@@ -20,7 +20,8 @@ public final class Main {
                 strict = true;
                 continue;
             }
-            if (!java.util.Set.of("--version", "--cache", "--output", "--sources").contains(args[i])
+            if (!java.util.Set.of("--version", "--cache", "--output", "--sources")
+                            .contains(args[i])
                     || i + 1 == args.length)
                 throw new IllegalArgumentException("Unknown or incomplete argument: " + args[i]);
             if (options.put(args[i], args[++i]) != null)
@@ -29,27 +30,18 @@ public final class Main {
         String version = options.getOrDefault("--version", "26.3");
         if (!version.matches("[A-Za-z0-9._-]+") || version.equals(".") || version.equals(".."))
             throw new IllegalArgumentException("Invalid version ID");
-        Path output =
-                Path.of(options.getOrDefault("--output", "build/generated"))
-                        .toAbsolutePath()
-                        .normalize();
-        Path cache =
-                Path.of(options.getOrDefault("--cache", "build/minecraft"))
-                        .toAbsolutePath()
-                        .normalize();
+        Path output = Path.of(options.getOrDefault("--output", "build/generated"))
+                .toAbsolutePath()
+                .normalize();
+        Path cache = Path.of(options.getOrDefault("--cache", "build/minecraft"))
+                .toAbsolutePath()
+                .normalize();
         Artifacts.Input input;
         if (options.containsKey("--sources")) {
-            input =
-                    new Artifacts.Input(
-                            Path.of(options.get("--sources")).toAbsolutePath().normalize(),
-                            -1,
-                            Map.of(
-                                    "version",
-                                    version,
-                                    "mode",
-                                    "external-sources",
-                                    "protocol",
-                                    "unknown"));
+            input = new Artifacts.Input(
+                    Path.of(options.get("--sources")).toAbsolutePath().normalize(),
+                    -1,
+                    Map.of("version", version, "mode", "external-sources", "protocol", "unknown"));
         } else {
             input = new Artifacts().prepare(version, cache);
         }
@@ -57,23 +49,20 @@ public final class Main {
                 || input.sources().startsWith(output)
                 || cache.startsWith(output)
                 || output.equals(Path.of("").toAbsolutePath().normalize()))
-            throw new IllegalArgumentException(
-                    "Output must be separate from sources, cache, and working directory");
+            throw new IllegalArgumentException("Output must be separate from sources, cache, and working directory");
         Analyzer analyzer = new Analyzer(input.sources());
         var registrations = analyzer.analyze();
-        var report =
-                new Emitter()
-                        .emit(
-                                output,
-                                input.provenance(),
-                                input.protocol(),
-                                registrations,
-                                analyzer.models,
-                                java.util.List.copyOf(analyzer.dispatches.values()),
-                                analyzer.registryGaps);
+        var report = new Emitter()
+                .emit(
+                        output,
+                        input.provenance(),
+                        input.protocol(),
+                        registrations,
+                        analyzer.models,
+                        java.util.List.copyOf(analyzer.dispatches.values()),
+                        analyzer.registryGaps);
         if (strict && report.generatedRegistrations() != report.totalRegistrations())
             throw new IllegalStateException(
-                    "Unsupported packet codecs remain. Read resources/packetforge/protocol.json in "
-                            + output);
+                    "Unsupported packet codecs remain. Read resources/packetforge/protocol.json in " + output);
     }
 }
