@@ -142,6 +142,10 @@ class GeneratedRoundTripTest {
             throw new IllegalArgumentException("Unrecognized generic type: " + type);
         }
         Class<?> clazz = (Class<?>) type;
+        if (clazz == MetadataEntry.class) {
+            @SuppressWarnings("unchecked") Variant<Integer> value = (Variant<Integer>) sample(type("org.stackanvil.packetforge.commons.Variant<Integer>"), shape, variant, models);
+            return new MetadataEntry(variant, value);
+        }
         if (clazz == HolderSet.class) return new HolderSet.Direct(variant == 0 ? List.of() : List.of(1));
         if (clazz == ComponentPatch.class) return variant == 0 ? ComponentPatch.EMPTY : new ComponentPatch(Map.of(1, 12 + variant), Set.of());
         if (clazz == ItemStack.class) return variant == 0 && shape.contains("OPTIONAL_") ? ItemStack.EMPTY : new ItemStack(1 + variant, 1, (ComponentPatch) sample(ComponentPatch.class, "", variant, models));
@@ -182,7 +186,9 @@ class GeneratedRoundTripTest {
         if (clazz.isEnum()) { Object[] values = clazz.getEnumConstants(); return values[variant % values.length]; }
         if (clazz.isRecord()) {
             JsonObject model = models.get(clazz.getName());
-            if (model.has("program")) {
+            String originalName = model.get("originalName").getAsString();
+            boolean conditionalFixture = originalName.equals("net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket") || originalName.equals("net.minecraft.network.protocol.game.ClientboundSetObjectivePacket");
+            if (model.has("program") && !conditionalFixture) {
                 @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) clazz.getField("CODEC").get(null);
                 RuntimeException failure = null;
                 for (int seed : new int[]{variant, variant % 2, 0}) {
@@ -201,12 +207,13 @@ class GeneratedRoundTripTest {
                 String original = model.get("originalName").getAsString();
                 boolean nonempty = original.equals("net.minecraft.world.level.pathfinder.Path.DebugData") && components[i].getName().equals("targetNodes")
                         || original.equals("net.minecraft.world.entity.PositionPath.Stepped") && components[i].getName().equals("steps");
-                int fieldVariant = original.equals("net.minecraft.world.level.block.entity.SignText") && components[i].getName().equals("filteredMessagesForSerialization") && variant != 0 ? variant + 1 : original.equals("net.minecraft.world.item.enchantment.Enchantable") ? variant + 1 : original.startsWith("net.minecraft.core.particles.") && components[i].getName().equals("scale") ? variant + 1 : nonempty ? Math.max(1, variant) : variant;
+                int fieldVariant = original.equals("net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket") && components[i].getName().equals("parameters") ? variant == 1 ? 0 : variant + 1 : original.equals("net.minecraft.world.entity.npc.villager.VillagerData") && components[i].getName().equals("level") ? variant + 1 : original.equals("net.minecraft.world.level.block.entity.SignText") && components[i].getName().equals("filteredMessagesForSerialization") && variant != 0 ? variant + 1 : original.equals("net.minecraft.world.item.enchantment.Enchantable") ? variant + 1 : original.startsWith("net.minecraft.core.particles.") && components[i].getName().equals("scale") ? variant + 1 : nonempty ? Math.max(1, variant) : variant;
                 values[i] = original.equals("net.minecraft.world.effect.MobEffectInstance.Details") && components[i].getName().equals("hiddenEffect") && SAMPLE_TYPES.get().stream().anyMatch(t -> t.contains(".PotionContents#")) ? Optional.empty()
                         : original.equals("net.minecraft.world.item.ItemStackTemplate") && components[i].getName().equals("item") ? 1
                         : original.equals("net.minecraft.world.item.ItemStackTemplate") && components[i].getName().equals("count") ? variant + 1
                         : sample(components[i].getGenericType(), fields.get(i).getAsJsonObject().getAsJsonObject("read").get("shape").getAsString(), fieldVariant, models);
             }
+            if (originalName.equals("net.minecraft.world.level.saveddata.maps.MapItemSavedData.MapPatch#sentinel")) values[4] = new byte[(int) values[0] * (int) values[1]];
             if (model.get("originalName").getAsString().equals("net.minecraft.world.item.crafting.display.ShapedCraftingRecipeDisplay")) {
                 values[0] = variant + 1; values[1] = 1;
                 @SuppressWarnings("unchecked") List<Object> ingredients = (List<Object>) values[2];

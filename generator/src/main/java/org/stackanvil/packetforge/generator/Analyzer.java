@@ -293,7 +293,25 @@ final class Analyzer {
             return read(cast.getExpression(), buffer, source);
         }
         if (expression instanceof ObjectCreationExpr creation && creation.getArguments().size() == 1 && creation.getArgument(0).toString().equals(buffer)) return modelWire(model(index.resolve(creation.getTypeAsString(), source)));
+        if (expression instanceof MethodCallExpr helper && helper.getScope().isEmpty() && helper.getArguments().size() == 1 && helper.getArgument(0).toString().equals(buffer)) return new EntityMetadataAnalyzer(this).read(helper, buffer, source);
         if (!(expression instanceof MethodCallExpr call) || call.getScope().isEmpty()) throw new Unsupported("Unsupported read expression: " + shortText(expression));
+        if (call.getNameAsString().equals("byName") && call.getArguments().size() == 2 && call.getScope().orElse(null) instanceof FieldAccessExpr field && field.getNameAsString().equals("CODEC")) {
+            var enumeration = index.source(index.resolve(field.getScope().toString(), source));
+            Wire underlying = read(call.getArgument(0), buffer, source);
+            if (!underlying.shape().equals("UTF8") || !(enumeration.declaration() instanceof EnumDeclaration entries)) throw new Unsupported("Named enum reader does not use a string codec");
+            var declaration = enumeration.declaration().getFieldByName("CODEC").flatMap(f -> f.getVariable(0).getInitializer()).orElseThrow();
+            if (!(declaration instanceof MethodCallExpr factory) || !factory.getScope().map(Object::toString).orElse("").equals("StringRepresentable") || !factory.getNameAsString().equals("fromEnum") || factory.getArguments().size() != 1 || !(factory.getArgument(0) instanceof MethodReferenceExpr values) || !values.getIdentifier().equals("values") || !index.resolve(values.getScope().toString(), enumeration).equals(enumeration.name())) throw new Unsupported("Enum codec is not StringRepresentable.fromEnum of its own constants");
+            String nameField = getterField(new MethodReferenceExpr(new com.github.javaparser.ast.expr.TypeExpr(StaticJavaParser.parseType(enumeration.name())), null, "getSerializedName"), enumeration);
+            var constructors = entries.getMembers().stream().filter(m -> m instanceof ConstructorDeclaration).map(m -> (ConstructorDeclaration) m).toList();
+            List<String> names = new ArrayList<>();
+            for (var constant : entries.getEntries()) {
+                Expression name = enumConstructorField(constructors, constant.getArguments(), nameField, new HashSet<>());
+                if (!(name instanceof StringLiteralExpr)) throw new Unsupported("Enum name is not a literal"); names.add(name.toString());
+            }
+            if (!(call.getArgument(1) instanceof FieldAccessExpr fallback) || !index.resolve(fallback.getScope().toString(), source).equals(enumeration.name()) || entries.getEntries().stream().noneMatch(e -> e.getNameAsString().equals(fallback.getNameAsString()))) throw new Unsupported("Named enum fallback is not a constant of its type");
+            Model model = model(enumeration.name());
+            return new Wire(model.generatedName(), "WireCodecs.enumNames(" + model.generatedName() + ".values(), new String[]{" + String.join(", ", names) + "}, " + underlying.codec() + ", " + model.generatedName() + "." + fallback.getNameAsString() + ")", "enumString:" + enumeration.name());
+        }
         if (call.getNameAsString().equals("decode") && call.getArguments().size() == 1 && call.getArgument(0).toString().equals(buffer)) return codec(call.getScope().get(), source);
         if (!call.getScope().get().toString().equals(buffer) && call.getArguments().size() == 1 && call.getArgument(0) instanceof MethodCallExpr nested && nested.getScope().map(Object::toString).orElse("").equals(buffer)) {
             return enumSwitch(call, read(call.getArgument(0), buffer, source), source);
@@ -304,6 +322,13 @@ final class Analyzer {
         if (operation.equals("Nbt") && call.getArguments().isEmpty()) return new Wire("org.stackanvil.packetforge.commons.NbtTag.Compound", "NbtCodecs.NULLABLE_COMPOUND", "NBT_COMPOUND_NULLABLE");
         if (operation.equals("Utf") && call.getArguments().size() <= 1) return string(call.getArguments().isEmpty() ? "32767" : integer(call.getArgument(0), source));
         if (operation.equals("ByteArray") && call.getArguments().size() <= 1) return new Wire("byte[]", "WireCodecs.byteArray(" + (call.getArguments().isEmpty() ? "Integer.MAX_VALUE" : integer(call.getArgument(0), source)) + ")", "byteArray");
+        if (operation.equals("ById") && call.getArguments().size() == 1 && call.getArgument(0) instanceof FieldAccessExpr lookup) {
+            var target = index.source(index.resolve(lookup.getScope().toString(), source));
+            if (!(target.declaration() instanceof EnumDeclaration)) throw new Unsupported("ID reader is not a declared enum map");
+            var initializer = target.declaration().getFieldByName(lookup.getNameAsString()).flatMap(f -> f.getVariable(0).getInitializer()).orElseThrow(() -> new Unsupported("Missing enum ID lookup"));
+            if (!(initializer instanceof MethodCallExpr factory) || factory.getArguments().isEmpty()) throw new Unsupported("Unknown enum ID factory");
+            return enumIdMapper(new MethodCallExpr(new NameExpr("ByteBufCodecs"), "idMapper").addArgument(new NameExpr(lookup.getNameAsString())).addArgument(factory.getArgument(0).clone()), target);
+        }
         if (operation.equals("Enum") && call.getArguments().size() == 1 && call.getArgument(0) instanceof ClassExpr type) {
             Model enumeration = model(index.resolve(type.getTypeAsString(), source));
             if (enumeration.constants().isEmpty()) throw new Unsupported("readEnum target is not an enum");
@@ -315,10 +340,19 @@ final class Analyzer {
         }
         throw new Unsupported("Unsupported buffer read: " + shortText(call));
     }
-    private Wire write(MethodCallExpr call, String buffer, String field, Wire read, SourceIndex.Source source) {
+    Wire write(MethodCallExpr call, String buffer, String field, Wire read, SourceIndex.Source source) {
+        if (read.shape().startsWith("metadata<") && new EntityMetadataAnalyzer(this).writes(call, buffer, field, source)) return read;
+        if (call.getScope().map(Object::toString).orElse("").equals(buffer) && call.getNameAsString().equals("writeById") && call.getArguments().size() == 2 && directField(call.getArgument(1)).equals(field) && read.shape().startsWith("enum:")) {
+            var target = index.source(read.shape().substring(5));
+            if (!(call.getArgument(0) instanceof MethodReferenceExpr)) throw new Unsupported("Enum ID writer is not a direct accessor");
+            var lookup = target.declaration().getFields().stream().flatMap(f -> f.getVariables().stream()).filter(v -> v.getTypeAsString().startsWith("IntFunction<")).toList();
+            if (lookup.size() != 1) throw new Unsupported("Ambiguous enum ID lookup");
+            return enumIdMapper(new MethodCallExpr(new NameExpr("ByteBufCodecs"), "idMapper").addArgument(new NameExpr(lookup.getFirst().getNameAsString())).addArgument(call.getArgument(0).clone()), target);
+        }
         if (call.getScope().isEmpty()) throw new Unsupported("Unscoped write");
         if (call.getNameAsString().equals("write") && call.getArguments().size() == 1 && call.getArgument(0).toString().equals(buffer) && directField(call.getScope().get()).equals(field) && read.shape().startsWith("model:")) return read;
         if (call.getNameAsString().equals("encode") && call.getArguments().size() == 2 && call.getArgument(0).toString().equals(buffer) && directField(call.getArgument(1)).equals(field)) return codec(call.getScope().get(), source);
+        if (read.shape().startsWith("enumString:") && call.getScope().get().toString().equals(buffer) && call.getNameAsString().equals("writeUtf") && call.getArguments().size() >= 1 && call.getArgument(0) instanceof MethodCallExpr name && name.getNameAsString().equals("getSerializedName") && name.getArguments().isEmpty() && name.getScope().isPresent() && directField(name.getScope().get()).equals(field)) return read;
         if (read.shape().startsWith("enumSwitch:") && call.getScope().get().toString().equals(buffer) && call.getArguments().size() == 1 && call.getArgument(0) instanceof MethodCallExpr accessor && accessor.getArguments().isEmpty() && accessor.getScope().isPresent() && directField(accessor.getScope().get()).equals(field)) {
             String[] parts = read.shape().split(":");
             String operation = call.getNameAsString().replaceFirst("^write", "");
@@ -465,11 +499,17 @@ final class Analyzer {
         return expression;
     }
     private Wire readerFunction(Expression expression, SourceIndex.Source source) {
+        if (expression instanceof LambdaExpr lambda && lambda.getParameters().size() == 1 && lambda.getBody() instanceof ExpressionStmt body && body.getExpression() instanceof ObjectCreationExpr creation && index.resolve(creation.getTypeAsString(), source).equals("net.minecraft.world.phys.Vec3") && creation.getArguments().size() == 3 && creation.getArguments().stream().allMatch(a -> a.toString().equals(lambda.getParameter(0).getNameAsString() + ".readDouble()"))) return new Wire("org.stackanvil.packetforge.commons.Vector3", "VectorCodecs.DOUBLE", "VECTOR3");
         if (expression instanceof MethodReferenceExpr reference && reference.getIdentifier().equals("new")) return modelWire(model(index.resolve(reference.getScope().toString(), source)));
         if (expression instanceof MethodReferenceExpr reference && reference.getScope().toString().equals("FriendlyByteBuf") && reference.getIdentifier().startsWith("read")) return read(new MethodCallExpr(new NameExpr("input"), reference.getIdentifier()), "input", source);
         return codec(expression, source);
     }
     private Wire writerFunction(Expression expression, SourceIndex.Source source) {
+        if (expression instanceof LambdaExpr lambda && lambda.getParameters().size() == 2 && lambda.getBody() instanceof BlockStmt body && body.getStatements().size() == 3) {
+            String buffer = lambda.getParameter(0).getNameAsString(), value = lambda.getParameter(1).getNameAsString();
+            boolean vector = true; for (int i = 0; i < 3; i++) if (!body.getStatement(i).toString().equals(buffer + ".writeDouble(" + value + "." + List.of("x", "y", "z").get(i) + "());")) vector = false;
+            if (vector) return new Wire("org.stackanvil.packetforge.commons.Vector3", "VectorCodecs.DOUBLE", "VECTOR3");
+        }
         if (expression instanceof MethodReferenceExpr reference && reference.getIdentifier().equals("write") && !reference.getScope().toString().equals("FriendlyByteBuf")) return modelWire(model(index.resolve(reference.getScope().toString(), source)));
         if (expression instanceof MethodReferenceExpr reference && reference.getScope().toString().equals("FriendlyByteBuf") && reference.getIdentifier().startsWith("write")) {
             String operation = reference.getIdentifier().substring(5);
@@ -479,6 +519,8 @@ final class Analyzer {
         return codec(expression, source);
     }
     Wire codec(Expression expression, SourceIndex.Source source) {
+        if (expression instanceof CastExpr cast) return codec(cast.getExpression(), source);
+        if (expression instanceof EnclosedExpr enclosed) return codec(enclosed.getInner(), source);
         if (expression instanceof NameExpr bound && bindings.containsKey(bound.getNameAsString())) return bindings.get(bound.getNameAsString());
         if (expression instanceof ObjectCreationExpr anonymous && anonymous.getAnonymousClassBody().isPresent()) {
             var methods = anonymous.getAnonymousClassBody().get().stream().filter(m -> m instanceof MethodDeclaration).map(m -> (MethodDeclaration) m).toList();
@@ -536,8 +578,14 @@ final class Analyzer {
                 Wire patch = codec(new FieldAccessExpr(new NameExpr("net.minecraft.core.component.DataComponentPatch"), field.equals("OPTIONAL_UNTRUSTED_STREAM_CODEC") ? "DELIMITED_STREAM_CODEC" : "STREAM_CODEC"), source);
                 return new Wire("org.stackanvil.packetforge.commons.ItemStack", "ComponentCodecs.itemStack(" + patch.codec() + ", " + !field.equals("STREAM_CODEC") + ")", "ITEM_STACK(" + field + ")<" + patch.shape() + ">");
             }
+            if (owner.equals("net.minecraft.network.syncher.EntityDataSerializers")) {
+                if (field.equals("OPTIONAL_BLOCK_STATE_CODEC")) return new Wire("int", "WireCodecs.VAR_INT", "OPTIONAL_BLOCK_STATE_ID");
+                if (field.equals("OPTIONAL_UNSIGNED_INT_CODEC")) return new Wire("java.util.OptionalInt", "WireCodecs.OPTIONAL_VAR_INT", "OPTIONAL_VAR_INT");
+            }
             var target = index.source(owner);
             if (field.equals("STREAM_CODEC") && !(target.declaration() instanceof EnumDeclaration)) {
+                var optional = target.declaration().getFieldByName(field).flatMap(f -> f.getVariable(0).getInitializer()).orElse(null);
+                if (optional instanceof MethodCallExpr call && call.getNameAsString().equals("of")) try { return new SentinelOptionalAnalyzer(this).lower(call, target); } catch (Unsupported notSentinel) { }
                 String alias = owner + "#stream-alias";
                 if (active.add(alias)) {
                     try { return codec(target.declaration().getFieldByName(field).orElseThrow(() -> new Unsupported("Missing stream codec")).getVariable(0).getInitializer().orElseThrow(), target); }
@@ -577,6 +625,7 @@ final class Analyzer {
                 if (method.equals("stringUtf8") && call.getArguments().size() == 1) return string(integer(call.getArgument(0), source));
                 if (method.equals("byteArray") && call.getArguments().size() == 1) return new Wire("byte[]", "WireCodecs.byteArray(" + integer(call.getArgument(0), source) + ")", "byteArray");
                 if (method.equals("optional") && call.getArguments().size() == 1) return container("optional", codec(call.getArgument(0), source), "Integer.MAX_VALUE");
+                if (method.equals("collection") && (call.getArguments().size() == 2 || call.getArguments().size() == 3) && call.getArgument(0) instanceof MethodReferenceExpr factory) return container(factory.getScope().toString().contains("Set") ? "set" : "list", codec(call.getArgument(1), source), call.getArguments().size() == 3 ? integer(call.getArgument(2), source) : "Integer.MAX_VALUE");
                 if (method.equals("map") && (call.getArguments().size() == 3 || call.getArguments().size() == 4)) {
                     Wire key = codec(call.getArgument(1), source), value = codec(call.getArgument(2), source);
                     return new Wire("java.util.Map<" + boxed(key.type()) + ", " + boxed(value.type()) + ">", "WireCodecs.map(" + key.codec() + ", " + value.codec() + ", " + (call.getArguments().size() == 4 ? integer(call.getArgument(3), source) : "Integer.MAX_VALUE") + ")", "map<" + key.shape() + "," + value.shape() + ">");
@@ -630,6 +679,12 @@ final class Analyzer {
                 }
                 if (argument instanceof MethodReferenceExpr ref && ref.getScope().toString().equals("ByteBufCodecs") && ref.getIdentifier().equals("optional")) return container("optional", inner, "Integer.MAX_VALUE");
             }
+        }
+        if (expression instanceof MethodCallExpr factory && factory.getScope().isPresent()) {
+            String identity = "factory:" + source.name() + "#" + expression;
+            if (active.add(identity)) try { return new StaticCodecResolver(this).factory(factory, source); }
+            catch (Unsupported unsupported) { throw new Unsupported("Unsupported stream codec: " + shortText(expression) + "; factory: " + unsupported.getMessage()); }
+            finally { active.remove(identity); }
         }
         throw new Unsupported("Unsupported stream codec: " + shortText(expression));
     }

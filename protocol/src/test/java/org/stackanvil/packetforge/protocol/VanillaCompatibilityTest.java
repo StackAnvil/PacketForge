@@ -45,7 +45,11 @@ class VanillaCompatibilityTest {
             new ServerboundClientCommandPacket(ServerboundClientCommandPacket_Action.REQUEST_STATS),
             new ServerboundUseItemPacket(org.stackanvil.packetforge.protocol.type.world.InteractionHand.OFF_HAND, 12345, 180f, -90f),
             new ServerboundPingRequestPacket(Long.MAX_VALUE),
-            new ClientboundFinishConfigurationPacket()
+            new ClientboundFinishConfigurationPacket(),
+            new ClientboundDamageEventPacket(123, 0, -1, 456, java.util.Optional.of(new Vector3(1.25, -2.5, 3.75))),
+            new ClientboundDamageEventPacket(123, 0, Integer.MAX_VALUE, -1, java.util.Optional.empty()),
+            new ClientboundSetPlayerTeamPacket((byte) 3, "team", List.of("player", "café"), java.util.Optional.empty()),
+            new ClientboundSetPlayerTeamPacket((byte) 4, "team", List.of("player"), java.util.Optional.empty())
         ));
         var models = GeneratedRoundTripTest.models();
         for (var entry : GeneratedProtocol.registry().entries().values()) {
@@ -122,10 +126,13 @@ class VanillaCompatibilityTest {
         for (var definition : models.entrySet()) {
             if (!definition.getKey().startsWith("$dispatch:")) continue;
             var dispatch = definition.getValue(); String name = dispatch.get("name").getAsString();
-            Object original = loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
+            boolean entityMetadata = dispatch.get("registry").getAsString().equals("ENTITY_DATA_SERIALIZERS");
+            Class<?> serializerTable = entityMetadata ? loader.loadClass("net.minecraft.network.syncher.EntityDataSerializers") : null;
+            Object defaultOriginal = entityMetadata ? null : loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
             @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) GeneratedWireCodecs.class.getField(name).get(null);
             var cases = dispatch.getAsJsonArray("cases"); String registryName = dispatch.get("registry").getAsString();
-            String[] registryNames = registryName.isEmpty() ? new String[0] : registryName.split("\\|");
+            String[] registryNames = registryName.isEmpty() || entityMetadata ? new String[0] : registryName.split("\\|");
+            if (entityMetadata) assertNull(serializerTable.getMethod("getSerializer", int.class).invoke(null, cases.size()), "Unrecovered entity serializers");
             int registryCases = 0;
             for (String registryField : registryNames) registryCases += (int) registryType.getMethod("size").invoke(loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField(registryField).get(null));
             if (registryNames.length > 0) assertEquals(cases.size(), registryCases, registryName + " table size");
@@ -133,6 +140,13 @@ class VanillaCompatibilityTest {
             for (var entry : cases) {
                 var branch = entry.getAsJsonObject(); String keyName = branch.get("key").getAsString();
                 Object key = GeneratedRoundTripTest.dispatchKey(keyType, keyName);
+                Object original = defaultOriginal;
+                if (entityMetadata) {
+                    Object serializer = serializerTable.getMethod("getSerializer", int.class).invoke(null, (Integer) key);
+                    assertSame(serializerTable.getField(branch.get("name").getAsString()).get(null), serializer, "Entity serializer ID " + key);
+                    original = loader.loadClass("net.minecraft.network.syncher.EntityDataSerializer").getMethod("codec").invoke(serializer);
+                }
+                final Object originalCodec = original;
                 if (registryNames.length > 0) {
                     String registryField = registryNames.length == 1 ? registryNames[0] : registryNames[keyName.startsWith("left:") ? 0 : 1];
                     Object registry = loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField(registryField).get(null);
@@ -148,7 +162,7 @@ class VanillaCompatibilityTest {
                         byte[] bytes = new byte[keyBytes.readableBytes()]; keyBytes.getBytes(0, bytes);
                         assertThrows(IllegalArgumentException.class, () -> generated.decode(keyBytes));
                         Object raw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) bytes);
-                        try { Object input = friendly.getConstructor(byteBuf, registryAccess).newInstance(raw, registries); assertThrows(java.lang.reflect.InvocationTargetException.class, () -> decode.invoke(original, input)); }
+                        try { Object input = friendly.getConstructor(byteBuf, registryAccess).newInstance(raw, registries); assertThrows(java.lang.reflect.InvocationTargetException.class, () -> decode.invoke(originalCodec, input)); }
                         finally { byteBuf.getMethod("release").invoke(raw); }
                     } finally { keyBytes.release(); }
                     continue;
@@ -161,7 +175,12 @@ class VanillaCompatibilityTest {
                     Object inputRaw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) expected), outputRaw = unpooled.getMethod("buffer").invoke(null);
                     try {
                         Object input = friendly.getConstructor(byteBuf, registryAccess).newInstance(inputRaw, registries), output = friendly.getConstructor(byteBuf, registryAccess).newInstance(outputRaw, registries);
-                        Object parsed = decode.invoke(original, input); assertEquals(0, byteBuf.getMethod("readableBytes").invoke(inputRaw)); encode.invoke(original, output, parsed);
+                        if (entityMetadata) {
+                            Class<?> varInt = loader.loadClass("net.minecraft.network.VarInt");
+                            assertEquals(key, varInt.getMethod("read", byteBuf).invoke(null, inputRaw));
+                            varInt.getMethod("write", byteBuf, int.class).invoke(null, outputRaw, (Integer) key);
+                        }
+                        Object parsed = decode.invoke(originalCodec, input); assertEquals(0, byteBuf.getMethod("readableBytes").invoke(inputRaw)); encode.invoke(originalCodec, output, parsed);
                         byte[] actual = new byte[(int) byteBuf.getMethod("readableBytes").invoke(outputRaw)]; byteBuf.getMethod("readBytes", byte[].class).invoke(outputRaw, (Object) actual);
                         if (!java.util.Arrays.equals(expected, actual)) assertSameWireValues(generated, expected, actual, name + " / " + branch.get("name"));
                         compared++;

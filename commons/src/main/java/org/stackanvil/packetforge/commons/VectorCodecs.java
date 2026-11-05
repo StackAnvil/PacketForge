@@ -5,6 +5,7 @@ import io.netty.buffer.ByteBuf;
 /** Vector wire primitives, including the scaled 15-bit component encoding. */
 public final class VectorCodecs {
     private VectorCodecs() {}
+    public static final PacketCodec<IntVector3> INT = WireCodecs.of(b -> new IntVector3(b.readInt(), b.readInt(), b.readInt()), (b, v) -> { b.writeInt(v.x()); b.writeInt(v.y()); b.writeInt(v.z()); });
     public static final PacketCodec<Vector3> DOUBLE = WireCodecs.of(b -> new Vector3(b.readDouble(), b.readDouble(), b.readDouble()), (b, v) -> { b.writeDouble(v.x()); b.writeDouble(v.y()); b.writeDouble(v.z()); });
     public static final PacketCodec<FloatVector3> FLOAT = WireCodecs.of(b -> new FloatVector3(b.readFloat(), b.readFloat(), b.readFloat()), (b, v) -> { b.writeFloat(v.x()); b.writeFloat(v.y()); b.writeFloat(v.z()); });
     public static final PacketCodec<Quaternion> QUATERNION = WireCodecs.of(b -> new Quaternion(b.readFloat(), b.readFloat(), b.readFloat(), b.readFloat()), (b, v) -> { b.writeFloat(v.x()); b.writeFloat(v.y()); b.writeFloat(v.z()); b.writeFloat(v.w()); });

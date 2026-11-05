@@ -101,6 +101,21 @@ public final class WireCodecs {
     public static <A, B> PacketCodec<B> mapped(PacketCodec<A> original, Function<A, B> decode, Function<B, A> encode) {
         return of(b -> decode.apply(original.decode(b)), (b, value) -> original.encode(b, encode.apply(value)));
     }
+    public static <T> PacketCodec<Optional<T>> sentinelOptional(PacketCodec<T> payload, PacketCodec<Integer> prefix, int absent) {
+        return of(input -> {
+            int start = input.readerIndex(); int marker = prefix.decode(input);
+            if (marker == absent) return Optional.empty();
+            input.readerIndex(start); return Optional.of(payload.decode(input));
+        }, (output, value) -> {
+            if (value.isEmpty()) { prefix.encode(output, absent); return; }
+            ByteBuf scratch = output.alloc().buffer();
+            try {
+                payload.encode(scratch, value.get()); int start = scratch.readerIndex();
+                if (prefix.decode(scratch) == absent) throw new IllegalArgumentException("Present payload uses the absence marker");
+                scratch.readerIndex(start); output.writeBytes(scratch);
+            } finally { scratch.release(); }
+        });
+    }
     public static <T> PacketCodec<T> lengthPrefixed(PacketCodec<T> original, int maxBytes) {
         if (maxBytes < 0) throw new IllegalArgumentException("Negative payload limit");
         return of(b -> { int count = checkedLength(VAR_INT.decode(b), Math.min(maxBytes, b.readableBytes())); return original.decode(b.readSlice(count)); },
@@ -228,6 +243,12 @@ public final class WireCodecs {
             for (int i = 0; i < encoded.length; i++) if (encoded[i] == normalized) return constants[i];
             throw new IllegalArgumentException("Enum fallback requires continuous IDs");
         }, (b, v) -> wire.encode(b, encoded[v.ordinal()]));
+    }
+    public static <E extends Enum<E>> PacketCodec<E> enumNames(E[] values, String[] names, PacketCodec<String> wire, E fallback) {
+        if (values.length != names.length) throw new IllegalArgumentException("Enum name count differs");
+        E[] constants = values.clone(); String[] encoded = names.clone(); var decoded = new LinkedHashMap<String, E>();
+        for (int i = 0; i < constants.length; i++) if (decoded.put(encoded[i], constants[i]) != null) throw new IllegalArgumentException("Repeated enum name");
+        return of(input -> decoded.getOrDefault(wire.decode(input), fallback), (output, value) -> wire.encode(output, encoded[value.ordinal()]));
     }
     public static <E extends Enum<E>> PacketCodec<E> enumIdsOrDefault(E[] values, int[] ids, PacketCodec<Integer> wire, E fallback) {
         if (values.length != ids.length) throw new IllegalArgumentException("Enum ID count differs");

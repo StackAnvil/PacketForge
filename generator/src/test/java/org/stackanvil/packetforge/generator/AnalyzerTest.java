@@ -84,7 +84,7 @@ class AnalyzerTest {
             } finally { data.release(); }
         }
     }
-    @Test void rejectsReaderWriterMismatchAndNumericTransforms() throws Exception {
+    @Test void rejectsReaderWriterMismatchAndPreservesExplicitNarrowingTransforms() throws Exception {
         fixture();
         source("TestPacket", """
             record TestPacket(int value) implements Packet<Listener> {
@@ -103,6 +103,24 @@ class AnalyzerTest {
                 void write(FriendlyByteBuf out) { out.writeVarInt(this.value); }
             }
             """);
-        assertTrue(new Analyzer(temporary.resolve("sources")).analyze().get(2).reason().contains("Numeric cast"));
+        Analyzer narrowed = new Analyzer(temporary.resolve("sources")); var registrations = narrowed.analyze();
+        assertTrue(registrations.get(2).supported(), registrations.get(2).reason());
+        Path generated = temporary.resolve("narrowed");
+        new Emitter().emit(generated, Map.of("version", "fixture"), 777, registrations, narrowed.models);
+        var compiler = ToolProvider.getSystemJavaCompiler(); Path classes = temporary.resolve("narrowed-classes"); Files.createDirectories(classes);
+        String classpath = String.join(java.io.File.pathSeparator, List.of(Packet.class, ByteBuf.class, io.netty.util.ReferenceCounted.class).stream().map(c -> Path.of(java.net.URI.create(c.getProtectionDomain().getCodeSource().getLocation().toString())).toString()).toList());
+        try (var manager = compiler.getStandardFileManager(null, null, null); var files = Files.walk(generated.resolve("java"))) {
+            assertTrue(compiler.getTask(null, manager, null, List.of("-classpath", classpath, "-d", classes.toString()), null, manager.getJavaFileObjectsFromPaths(files.filter(p -> p.toString().endsWith(".java")).toList())).call());
+        }
+        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{classes.toUri().toURL()}, getClass().getClassLoader())) {
+            Class<?> type = loader.loadClass(registrations.get(2).generatedClass());
+            @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) type.getField("CODEC").get(null);
+            ByteBuf input = Unpooled.buffer(), output = Unpooled.buffer();
+            try {
+                WireCodecs.VAR_INT.encode(input, 255); Object packet = codec.decode(input);
+                assertEquals((byte) -1, type.getMethod("value").invoke(packet)); assertFalse(input.isReadable());
+                codec.encode(output, packet); assertEquals(-1, WireCodecs.VAR_INT.decode(output)); assertFalse(output.isReadable());
+            } finally { input.release(); output.release(); }
+        }
     }
 }

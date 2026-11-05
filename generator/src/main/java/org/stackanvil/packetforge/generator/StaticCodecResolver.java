@@ -128,6 +128,12 @@ final class StaticCodecResolver {
         }
         throw new Unsupported("Not a static codec function: " + target.expression());
     }
+    Wire factory(MethodCallExpr call, SourceIndex.Source source) {
+        var owner = analyzer.index.source(analyzer.index.resolve(call.getScope().orElseThrow().toString(), source));
+        var candidates = owner.declaration().getMethodsByName(call.getNameAsString()).stream().filter(m -> m.isStatic() && m.getTypeAsString().contains("StreamCodec") && m.getParameters().size() == call.getArguments().size()).toList();
+        if (candidates.size() != 1) throw new Unsupported("No unambiguous static codec factory: " + owner.name() + "." + call.getNameAsString());
+        return codec(returned(candidates.getFirst(), owner, Map.of(), List.of(), call.getArguments().stream().map(e -> new Value(e, source)).toList()));
+    }
     private Value invokeMethod(SourceIndex.Source source, String method, List<Value> arguments) {
         var candidates = source.declaration().getMethodsByName(method).stream().filter(m -> m.getParameters().size() == arguments.size() && m.getBody().isPresent()).toList();
         if (candidates.isEmpty() && source.declaration() instanceof ClassOrInterfaceDeclaration clazz && clazz.getExtendedTypes().size() == 1) return invokeMethod(analyzer.index.source(analyzer.index.resolve(clazz.getExtendedTypes().get(0).getNameWithScope(), source)), method, arguments);
