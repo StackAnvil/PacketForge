@@ -30,6 +30,14 @@ class VanillaCompatibilityTest {
         }
         List<Packet> samples = new ArrayList<>(List.of(
             new ClientboundKeepAlivePacket(Long.MIN_VALUE),
+            new ClientboundSectionBlocksUpdatePacket(Long.MIN_VALUE, new short[]{0, 4095, 123}, new int[]{0, 1, 2}),
+            new ClientboundSetEquipmentPacket(123, List.of(
+                new Pair<>(org.stackanvil.packetforge.protocol.type.world.entity.EquipmentSlot.MAINHAND, new ItemStack(1, 1, ComponentPatch.EMPTY)),
+                new Pair<>(org.stackanvil.packetforge.protocol.type.world.entity.EquipmentSlot.HEAD, ItemStack.EMPTY))),
+            new ClientboundMoveEntityPacket_Pos(123, new MovementDelta.Linear(Short.MIN_VALUE, (short) 0, Short.MAX_VALUE), true),
+            new ClientboundMoveEntityPacket_PosRot(123, new MovementDelta.Stepped(List.of(
+                new MovementDelta.Step((short) -1, (short) 2, (short) -3, 0),
+                new MovementDelta.Step(Short.MAX_VALUE, Short.MIN_VALUE, (short) 0, 128))), (byte) -128, (byte) 127, false),
             new ClientboundTransferPacket("localhost", 25565),
             new ClientboundTransferPacket("münchen.example", 65535),
             new ClientboundSetHealthPacket(17.5f, 20, 3.25f),
@@ -128,9 +136,10 @@ class VanillaCompatibilityTest {
         for (var definition : models.entrySet()) {
             if (!definition.getKey().startsWith("$dispatch:")) continue;
             var dispatch = definition.getValue(); String name = dispatch.get("name").getAsString();
+            boolean enumOperation = dispatch.get("originalExpression").getAsString().startsWith("enum-decoder:");
             boolean entityMetadata = dispatch.get("registry").getAsString().equals("ENTITY_DATA_SERIALIZERS");
             Class<?> serializerTable = entityMetadata ? loader.loadClass("net.minecraft.network.syncher.EntityDataSerializers") : null;
-            Object defaultOriginal = entityMetadata ? null : loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
+            Object defaultOriginal = entityMetadata || enumOperation ? null : loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
             @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) GeneratedWireCodecs.class.getField(name).get(null);
             var cases = dispatch.getAsJsonArray("cases"); String registryName = dispatch.get("registry").getAsString();
             String[] registryNames = registryName.isEmpty() || entityMetadata ? new String[0] : registryName.split("\\|");
@@ -182,7 +191,19 @@ class VanillaCompatibilityTest {
                             assertEquals(key, varInt.getMethod("read", byteBuf).invoke(null, inputRaw));
                             varInt.getMethod("write", byteBuf, int.class).invoke(null, outputRaw, (Integer) key);
                         }
-                        Object parsed = decode.invoke(originalCodec, input); assertEquals(0, byteBuf.getMethod("readableBytes").invoke(inputRaw)); encode.invoke(originalCodec, output, parsed);
+                        if (enumOperation) {
+                            Class<?> enumeration = loadOriginal(loader, dispatch.get("sourceOwner").getAsString());
+                            Object sourceKey = java.util.Arrays.stream(enumeration.getEnumConstants()).filter(v -> ((Enum<?>) v).name().equals(keyName)).findFirst().orElseThrow();
+                            Class<?> varInt = loader.loadClass("net.minecraft.network.VarInt");
+                            assertEquals(((Enum<?>) sourceKey).ordinal(), varInt.getMethod("read", byteBuf).invoke(null, inputRaw));
+                            var field = enumeration.getDeclaredField(dispatch.get("originalExpression").getAsString().split(":")[1]); field.setAccessible(true);
+                            Object parsed = loader.loadClass("net.minecraft.network.codec.StreamDecoder").getMethod("decode", Object.class).invoke(field.get(sourceKey), input);
+                            varInt.getMethod("write", byteBuf, int.class).invoke(null, outputRaw, ((Enum<?>) sourceKey).ordinal());
+                            var writer = java.util.Arrays.stream(parsed.getClass().getDeclaredMethods()).filter(m -> m.getName().equals("write") && m.getParameterCount() == 1 && !m.isBridge()).findFirst().orElseThrow(); writer.setAccessible(true); writer.invoke(parsed, output);
+                        } else {
+                            Object parsed = decode.invoke(originalCodec, input); encode.invoke(originalCodec, output, parsed);
+                        }
+                        assertEquals(0, byteBuf.getMethod("readableBytes").invoke(inputRaw));
                         byte[] actual = new byte[(int) byteBuf.getMethod("readableBytes").invoke(outputRaw)]; byteBuf.getMethod("readBytes", byte[].class).invoke(outputRaw, (Object) actual);
                         if (!java.util.Arrays.equals(expected, actual)) assertSameWireValues(generated, expected, actual, name + " / " + branch.get("name"));
                         compared++;
@@ -231,7 +252,7 @@ class VanillaCompatibilityTest {
     private static void auditRelatedValues(ClassLoader loader, java.util.Map<String, com.google.gson.JsonObject> models, Object registries,
             Class<?> byteBuf, Class<?> unpooled, Class<?> friendly, Class<?> registryAccess, Method decode, Method encode) throws Exception {
         int compared = 0;
-        for (String original : List.of("net.minecraft.world.effect.MobEffectInstance", "net.minecraft.world.effect.MobEffectInstance.Details")) {
+        for (String original : List.of("net.minecraft.world.effect.MobEffectInstance", "net.minecraft.world.effect.MobEffectInstance.Details", "net.minecraft.advancements.DisplayInfo")) {
             var model = models.values().stream().filter(m -> m.has("originalName") && m.get("originalName").getAsString().equals(original)).findFirst().orElseThrow();
             Class<?> generated = Class.forName(model.get("generatedName").getAsString());
             @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) generated.getField("CODEC").get(null);

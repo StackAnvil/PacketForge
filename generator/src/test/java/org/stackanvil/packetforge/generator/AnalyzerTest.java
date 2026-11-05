@@ -56,6 +56,77 @@ class AnalyzerTest {
             }
             """);
     }
+    @Test void recoversEnumConstructorDecodersAndRejectsAnInconsistentTypeGetter() throws Exception {
+        fixture();
+        String body = """
+            class TestPacket implements Packet<Listener> {
+                static final Object STREAM_CODEC = Packet.codec(TestPacket::write, TestPacket::new);
+                final int id;
+                final Operation operation;
+                TestPacket(FriendlyByteBuf in) {
+                    this.id = in.readVarInt();
+                    TestPacket.Kind kind = in.readEnum(TestPacket.Kind.class);
+                    this.operation = kind.reader.decode(in);
+                }
+                void write(FriendlyByteBuf out) {
+                    out.writeVarInt(this.id);
+                    out.writeEnum(this.operation.getType());
+                    this.operation.write(out);
+                }
+                interface Operation { Kind getType(); void write(FriendlyByteBuf out); }
+                enum Kind {
+                    FIRST(TestPacket.First::new), SECOND(TestPacket.Second::new);
+                    final StreamDecoder reader;
+                    Kind(StreamDecoder reader) { this.reader = reader; }
+                }
+                record First(int number) implements Operation {
+                    First(FriendlyByteBuf in) { this(in.readVarInt()); }
+                    public Kind getType() { return TestPacket.Kind.FIRST; }
+                    public void write(FriendlyByteBuf out) { out.writeVarInt(this.number); }
+                }
+                record Second(boolean flag) implements Operation {
+                    Second(FriendlyByteBuf in) { this(in.readBoolean()); }
+                    public Kind getType() { return TestPacket.Kind.SECOND; }
+                    public void write(FriendlyByteBuf out) { out.writeBoolean(this.flag); }
+                }
+            }
+            """;
+        source("TestPacket", body);
+        Analyzer analyzer = new Analyzer(temporary.resolve("sources"));
+        var registrations = analyzer.analyze();
+        assertTrue(registrations.get(2).supported(), registrations.get(2).reason());
+        assertEquals(List.of("FIRST", "SECOND"), analyzer.dispatches.values().iterator().next().cases().stream().map(Analyzer.DispatchCase::key).toList());
+        source("TestPacket", body.replace("return TestPacket.Kind.SECOND", "return TestPacket.Kind.FIRST"));
+        assertFalse(new Analyzer(temporary.resolve("sources")).analyze().get(2).supported());
+    }
+    @Test void optionalGetterProjectionFollowsInterfacesAndRequiresAConcreteDirectAccessor() throws Exception {
+        fixture();
+        String body = """
+            import net.minecraft.resources.Identifier;
+            class TestPacket implements Packet<Listener> {
+                static final Object STREAM_CODEC = Packet.codec(TestPacket::write, TestPacket::new);
+                final Optional<TestPacket.Texture> background;
+                TestPacket(FriendlyByteBuf in) {
+                    this.background = in.readBoolean() ? Optional.of(new TestPacket.Texture(in.readIdentifier())) : Optional.empty();
+                }
+                void write(FriendlyByteBuf out) {
+                    out.writeBoolean(this.background.isPresent());
+                    this.background.map(TestPacket.Asset::id).ifPresent(out::writeIdentifier);
+                }
+                interface Asset { Identifier id(); }
+                record Texture(Identifier id) implements TestPacket.Asset {
+                    static final Object STREAM_CODEC = Identifier.STREAM_CODEC.map(TestPacket.Texture::new, TestPacket.Texture::id);
+                }
+            }
+            """;
+        source("TestPacket", body);
+        var entry = new Analyzer(temporary.resolve("sources")).analyze().get(2);
+        assertTrue(entry.supported(), entry.reason());
+        source("TestPacket", body.replace("implements TestPacket.Asset", ""));
+        assertFalse(new Analyzer(temporary.resolve("sources")).analyze().get(2).supported());
+        source("TestPacket", body.replace("record Texture(Identifier id) implements TestPacket.Asset {", "record Texture(Identifier id) implements TestPacket.Asset { public Identifier id() { return transform(this.id); }"));
+        assertFalse(new Analyzer(temporary.resolve("sources")).analyze().get(2).supported());
+    }
     @Test void retainsWireIdsAcrossBundleAndUnsupportedPacketsAndCompilesUsableCode() throws Exception {
         fixture();
         Analyzer analyzer = new Analyzer(temporary.resolve("sources"));

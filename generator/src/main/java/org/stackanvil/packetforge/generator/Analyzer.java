@@ -229,11 +229,17 @@ final class Analyzer {
                     Wire projection = compositeWire(composite, source);
                     fields = models.get(projection.shape().substring("model:".length())).fields();
                 } else try {
-                    var lowered = new ProgramLowerer(this, source, generated).lower(codec);
-                    fields = lowered.fields(); program = lowered.program();
+                    try { fields = new EnumOperationAnalyzer(this).lower(codec, source); }
+                    catch (Unsupported operationFailure) {
+                        var lowered = new ProgramLowerer(this, source, generated).lower(codec);
+                        fields = lowered.fields(); program = lowered.program();
+                    }
                 } catch (Unsupported programFailure) {
-                    if (!programFailure.getMessage().equals("Not an imperative stream codec")) throw new Unsupported(original.getMessage() + "; imperative: " + programFailure.getMessage());
-                    throw original;
+                    try { fields = new LinearWireProjection(this).lower(codec, source); }
+                    catch (Unsupported projectionFailure) {
+                        if (!programFailure.getMessage().equals("Not an imperative stream codec")) throw new Unsupported(original.getMessage() + "; imperative: " + programFailure.getMessage() + "; projection: " + projectionFailure.getMessage());
+                        throw original;
+                    }
                 }
             }
             List<String> guards = new ArrayList<>(validations.getOrDefault(name, List.of())); guards.addAll(recordGuards(source, fields));
@@ -828,10 +834,10 @@ final class Analyzer {
     }
     static String boxed(String type) { return switch (type) { case "boolean" -> "Boolean"; case "byte" -> "Byte"; case "short" -> "Short"; case "int" -> "Integer"; case "long" -> "Long"; case "float" -> "Float"; case "double" -> "Double"; default -> type; }; }
     static Wire modelWire(Model model) { return new Wire(model.generatedName(), model.generatedName() + ".CODEC", "model:" + model.originalName()); }
-    private String getterField(Expression expression, SourceIndex.Source source) {
+    String getterField(Expression expression, SourceIndex.Source source) {
         if (expression instanceof MethodReferenceExpr getter && index.resolve(getter.getScope().toString(), source).equals(source.name())) {
             String name = getter.getIdentifier();
-            if (source.declaration() instanceof RecordDeclaration record && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(name))) return name;
+            if (source.declaration() instanceof RecordDeclaration record && source.declaration().getMethodsByName(name).isEmpty() && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(name))) return name;
             var methods = source.declaration().getMethodsByName(name);
             if (methods.size() == 1 && methods.getFirst().getBody().isEmpty() && source.declaration() instanceof ClassOrInterfaceDeclaration clazz && clazz.isInterface()) return name;
             if (methods.size() == 1 && methods.getFirst().getParameters().isEmpty() && methods.getFirst().getBody().isPresent()) {

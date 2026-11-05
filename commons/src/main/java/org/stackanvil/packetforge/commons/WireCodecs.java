@@ -272,6 +272,7 @@ public final class WireCodecs {
         E[] constants = values.clone(); int[] encoded = ids.clone();
         return of(input -> { int id = wire.decode(input); for (int i = 0; i < encoded.length; i++) if (encoded[i] == id) return constants[i]; return fallback; }, (output, value) -> wire.encode(output, encoded[value.ordinal()]));
     }
+    public static int boundedCount(int size, int availableBytes) { return checkedLength(size, availableBytes); }
     private static int checkedLength(int size, int max) {
         if (size < 0 || size > max) throw new IllegalArgumentException("Invalid length: " + size + " (limit " + max + ")");
         return size;

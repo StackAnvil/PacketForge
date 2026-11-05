@@ -22,6 +22,7 @@ final class ProgramLowerer {
     private final Set<String> reads = new TreeSet<>(), writes = new TreeSet<>();
     private final Map<String, String> originalTypes = new LinkedHashMap<>();
     private final Map<String, String> helperCode = new LinkedHashMap<>();
+    private final Set<String> boundedArrayCounts = new HashSet<>();
     private final Map<String, String> localTypes = new HashMap<>();
     private String valueName = "value";
     private final String generatedName;
@@ -60,6 +61,12 @@ final class ProgramLowerer {
             if (decode.getStatements().size() != 1 || !(decode.getStatement(0) instanceof ExplicitConstructorInvocationStmt invocation) || !invocation.isThis()) throw new Unsupported("Imperative constructor delegates with extra statements");
             decode = new BlockStmt().addStatement(new ReturnStmt(new ObjectCreationExpr(null, StaticJavaParser.parseClassOrInterfaceType(source.name()), new NodeList<>(invocation.getArguments().stream().map(Expression::clone).toList()))));
             constructorMode = false;
+        }
+        for (var loop : decode.findAll(ForStmt.class)) {
+            if (!(loop.getCompare().orElse(null) instanceof BinaryExpr compare) || compare.getOperator() != BinaryExpr.Operator.LESS || !(compare.getRight() instanceof NameExpr count) || !(loop.getBody() instanceof BlockStmt body) || body.getStatements().isEmpty() || !body.findAll(IfStmt.class).isEmpty() || !body.findAll(BreakStmt.class).isEmpty() || !body.findAll(ContinueStmt.class).isEmpty() || !body.findAll(ReturnStmt.class).isEmpty()) continue;
+            if (!(compare.getLeft() instanceof NameExpr induction) || loop.getInitialization().size() != 1 || !(loop.getInitialization().get(0) instanceof VariableDeclarationExpr initial) || initial.getVariables().size() != 1 || !initial.getVariable(0).getNameAsString().equals(induction.getNameAsString()) || !initial.getVariable(0).getInitializer().map(Object::toString).orElse("").equals("0") || loop.getUpdate().size() != 1 || !Set.of(induction + "++", "++" + induction).contains(loop.getUpdate().get(0).toString()) || body.findAll(AssignExpr.class).stream().anyMatch(a -> a.getTarget() instanceof NameExpr n && Set.of(induction.getNameAsString(), count.getNameAsString()).contains(n.getNameAsString()))) continue;
+            if (!(body.getStatement(0) instanceof ExpressionStmt expression) || !(expression.getExpression() instanceof VariableDeclarationExpr values) || values.getVariables().size() != 1 || !(values.getVariable(0).getInitializer().orElse(null) instanceof MethodCallExpr read) || !read.getScope().map(Object::toString).orElse("").equals(input) || !Set.of("readVarLong", "readVarInt", "readByte", "readShort", "readInt", "readLong").contains(read.getNameAsString())) continue;
+            boundedArrayCounts.add(count.getNameAsString());
         }
         collectTypes(source, new HashSet<>());
         for (var variable : decode.findAll(VariableDeclarator.class)) localTypes.put(variable.getNameAsString(), variable.getTypeAsString());
@@ -143,6 +150,31 @@ final class ProgramLowerer {
             @Override public Visitable visit(NameExpr name, Void ignored) { return parameters.containsKey(name.getNameAsString()) ? parameters.get(name.getNameAsString()).clone() : name; }
         }, null);
     }
+    private Field optionalMapping(MethodCallExpr call) {
+        if (!call.getNameAsString().equals("map") || call.getArguments().size() != 1 || !(call.getArgument(0) instanceof MethodReferenceExpr reference) || call.getScope().isEmpty()) throw new Unsupported("Optional projection is not a direct getter reference");
+        String type = expressionType(call.getScope().get());
+        if (type == null || !type.startsWith("Optional<")) throw new Unsupported("Optional projection receiver has no known value type");
+        Wire value = valueType(type.substring(9, type.length() - 1));
+        if (!value.shape().startsWith("model:")) throw new Unsupported("Optional projection does not reference a wire record");
+        var model = analyzer.models.get(value.shape().substring(6));
+        var target = analyzer.index.source(analyzer.index.resolve(reference.getScope().toString(), source));
+        var concrete = analyzer.index.source(model.originalName().split("#", 2)[0]);
+        if (!inherits(concrete, target.name(), new HashSet<>())) throw new Unsupported("Optional getter belongs to another value type");
+        var concreteGetter = reference.clone().setScope(new TypeExpr(StaticJavaParser.parseType(concrete.name())));
+        String field = analyzer.getterField(concreteGetter, concrete);
+        var fields = model.fields().stream().filter(f -> f.name().equals(field)).toList();
+        if (fields.size() != 1) throw new Unsupported("Optional projection does not select a wire field");
+        return fields.getFirst();
+    }
+    private boolean inherits(SourceIndex.Source value, String parent, Set<String> visited) {
+        if (value.name().equals(parent)) return true;
+        if (!visited.add(value.name())) return false;
+        List<com.github.javaparser.ast.type.ClassOrInterfaceType> parents = new ArrayList<>();
+        if (value.declaration() instanceof RecordDeclaration record) parents.addAll(record.getImplementedTypes());
+        if (value.declaration() instanceof ClassOrInterfaceDeclaration clazz) { parents.addAll(clazz.getImplementedTypes()); parents.addAll(clazz.getExtendedTypes()); }
+        for (var type : parents) if (inherits(analyzer.index.source(analyzer.index.resolve(type.getNameWithScope(), value)), parent, visited)) return true;
+        return false;
+    }
     private Wire valueType(String name) {
         name = name.replaceAll("@[A-Za-z0-9_.]+(?:\\([^)]*\\))?\\s*", "").strip();
         String codec = switch (name) {
@@ -157,6 +189,9 @@ final class ProgramLowerer {
         if (name.equals("Tag") || name.equals("Component")) return new Wire("org.stackanvil.packetforge.commons.NbtTag", "NbtCodecs.TAG", name.equals("Component") ? "NBT:net.minecraft.network.chat.ComponentSerialization#CODEC" : "NBT");
         if (name.equals("UUID")) return new Wire("java.util.UUID", "WireCodecs.UUID_CODEC", "UUID_CODEC");
         if (name.equals("byte[]")) return new Wire("byte[]", "WireCodecs.byteArray(Integer.MAX_VALUE)", "byteArray");
+        if (name.equals("VecDelta")) return new MovementDeltaAnalyzer(analyzer).value();
+        if (name.equals("BlockState")) return new Wire("int", "WireCodecs.VAR_INT", "REGISTRY_BLOCK_STATE");
+        if (name.endsWith("[]")) { Wire component = valueType(name.substring(0, name.length() - 2)); return new Wire(component.type() + "[]", "", "program-array<" + component.shape() + ">"); }
         if (name.equals("Vec3i")) return new Wire("org.stackanvil.packetforge.commons.IntVector3", "VectorCodecs.INT", "VECTOR3I");
         if (name.equals("Vec3")) return new Wire("org.stackanvil.packetforge.commons.Vector3", "VectorCodecs.DOUBLE", "VECTOR3");
         var parsed = StaticJavaParser.parseType(name);
@@ -165,7 +200,11 @@ final class ProgramLowerer {
             var arguments = parsed.asClassOrInterfaceType().getTypeArguments().get();
             if (Set.of("Optional", "List", "Set", "Collection", "ArrayList", "HashSet").contains(raw) && arguments.size() == 1) {
                 Wire inner = valueType(arguments.get(0).asString()); String kind = raw.equals("Optional") ? "optional" : raw.contains("Set") ? "set" : "list";
-                return new Wire("java.util." + (kind.equals("optional") ? "Optional" : kind.equals("set") ? "Set" : "List") + "<" + boxed(inner.type()) + ">", "WireCodecs." + kind + "(" + inner.codec() + (kind.equals("optional") ? "" : ", Integer.MAX_VALUE") + ")", kind + "<" + inner.shape() + ">");
+                return new Wire("java.util." + (kind.equals("optional") ? "Optional" : kind.equals("set") ? "Set" : "List") + "<" + boxed(inner.type()) + ">", inner.codec().isEmpty() ? "" : "WireCodecs." + kind + "(" + inner.codec() + (kind.equals("optional") ? "" : ", Integer.MAX_VALUE") + ")", kind + "<" + inner.shape() + ">");
+            }
+            if (raw.equals("Pair") && arguments.size() == 2) {
+                Wire first = valueType(arguments.get(0).asString()), second = valueType(arguments.get(1).asString());
+                return new Wire("org.stackanvil.packetforge.commons.Pair<" + boxed(first.type()) + ", " + boxed(second.type()) + ">", "", "program-pair<" + first.shape() + "," + second.shape() + ">");
             }
             if (raw.equals("Holder") && arguments.size() == 1) return valueType(arguments.get(0).asString());
             if (raw.equals("ResourceKey")) return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
@@ -222,6 +261,20 @@ final class ProgramLowerer {
                 }
                 throw new Unsupported("Unsupported imperative buffer operation: " + original);
             }
+            if (scope.equals("VecDelta") && Set.of("read", "write").contains(method) && original.getArguments().size() == 2 && original.getArgument(0).toString().equals(buffer)) {
+                new MovementDeltaAnalyzer(analyzer).value();
+                if (encode && method.equals("write")) writes.add("MOVEMENT_DELTA");
+                else if (!encode && method.equals("read")) reads.add("MOVEMENT_DELTA");
+                else throw new Unsupported("Movement-delta helper used in the wrong direction");
+                Expression argument = (Expression) original.getArgument(1).accept(this, null);
+                return expression("MovementCodecs." + method + "(" + buffer + ", " + argument + ")");
+            }
+            if (method.equals("byId") && original.getArguments().size() == 1 && original.getScope().orElse(null) instanceof FieldAccessExpr registry && registry.getNameAsString().equals("BLOCK_STATE_REGISTRY") && analyzer.index.resolve(registry.getScope().toString(), source).equals("net.minecraft.world.level.block.Block")) {
+                reads.add("REGISTRY_BLOCK_STATE"); return original.getArgument(0).accept(this, null);
+            }
+            if (method.equals("getId") && original.getArguments().size() == 1 && analyzer.index.resolve(scope, source).equals("net.minecraft.world.level.block.Block")) {
+                writes.add("REGISTRY_BLOCK_STATE"); return original.getArgument(0).accept(this, null);
+            }
             if (Set.of("VarInt", "VarLong").contains(scope) && method.equals("read") && original.getArguments().size() == 1 && original.getArgument(0).toString().equals(buffer) && !encode) return new MethodCallExpr(new NameExpr(buffer), "read" + scope).accept(this, null);
             if (Set.of("VarInt", "VarLong").contains(scope) && method.equals("write") && original.getArguments().size() == 2 && original.getArgument(0).toString().equals(buffer) && encode) return new MethodCallExpr(new NameExpr(buffer), "write" + scope, new NodeList<>(original.getArgument(1).clone())).accept(this, null);
             if (scope.equals(valueName) && encode && call.getArguments().isEmpty() && fields.containsKey(method)) { call.setScope(new NameExpr("value")); return call; }
@@ -235,8 +288,35 @@ final class ProgramLowerer {
                 return expression(wire.codec() + ".encode(" + buffer + ", " + call.getArgument(1) + ")");
             }
             // Enum.ordinal is a JDK operation on generated enums.
-            if (method.equals("ordinal") && call.getArguments().isEmpty() && fieldWire(original.getScope().orElseThrow(() -> new Unsupported("Incomplete serialization declaration"))).shape().startsWith("enum:")) {
-                call.setScope((Expression) call.getScope().orElseThrow(() -> new Unsupported("Incomplete serialization declaration")).accept(this, null)); return call;
+            if (method.equals("ordinal") && call.getArguments().isEmpty() && original.getScope().isPresent()) {
+                String type = expressionType(original.getScope().get());
+                Wire wire = type == null ? fieldWire(original.getScope().get()) : valueType(type);
+                if (!wire.shape().startsWith("enum:")) throw new Unsupported("Ordinal receiver is not an enum");
+                call.setScope((Expression) call.getScope().orElseThrow().accept(this, null)); return call;
+            }
+            if (scope.equals("Lists") && method.equals("newArrayList") && original.getArguments().isEmpty()) return expression("new java.util.ArrayList<>()");
+            if (scope.equals("Pair") && method.equals("of") && original.getArguments().size() == 2) {
+                Expression a = (Expression) original.getArgument(0).accept(this, null), b = (Expression) original.getArgument(1).accept(this, null);
+                return expression("new org.stackanvil.packetforge.commons.Pair<>(" + a + ", " + b + ")");
+            }
+            if (method.equals("get") && original.getArguments().size() == 1 && original.getScope().orElse(null) instanceof FieldAccessExpr values && values.getNameAsString().equals("VALUES")) {
+                var owner = analyzer.index.source(analyzer.index.resolve(values.getScope().toString(), source));
+                if (!(owner.declaration() instanceof EnumDeclaration)) throw new Unsupported("Indexed values are not an enum");
+                var initializer = owner.declaration().getFieldByName("VALUES").flatMap(f -> f.getVariable(0).getInitializer()).orElseThrow(() -> new Unsupported("Enum has no values list"));
+                if (!initializer.toString().equals("List.of(values())")) throw new Unsupported("Enum values list changes its order");
+                return expression(analyzer.model(owner.name()).generatedName() + ".values()[" + original.getArgument(0).accept(this, null) + "]");
+            }
+            if (method.equals("map") && call.getArguments().size() == 1 && original.getArgument(0) instanceof MethodReferenceExpr) {
+                Field projected = optionalMapping(original);
+                call.setScope((Expression) original.getScope().orElseThrow().accept(this, null));
+                call.setArgument(0, expression("$packetforge_mapped_value -> $packetforge_mapped_value." + projected.name() + "()")); return call;
+            }
+            if (method.equals("ifPresent") && call.getArguments().size() == 1 && original.getArgument(0) instanceof MethodReferenceExpr reference && reference.getScope().toString().equals(buffer) && reference.getIdentifier().startsWith("write") && encode && original.getScope().orElse(null) instanceof MethodCallExpr mapped) {
+                Field projected = optionalMapping(mapped);
+                Wire wire = analyzer.read(new MethodCallExpr(new NameExpr("input"), reference.getIdentifier().replaceFirst("write", "read")), "input", source);
+                if (!wire.type().equals(projected.read().type())) throw new Unsupported("Optional projection writer changes its value type");
+                writes.add(physical(wire.shape())); call.setScope((Expression) original.getScope().get().accept(this, null));
+                call.setArgument(0, expression("$packetforge_optional_value -> " + wire.codec() + ".encode(" + buffer + ", $packetforge_optional_value)")); return call;
             }
             if (Set.of("Optional", "List", "Set", "Map").contains(scope) && Set.of("of", "empty", "ofNullable", "copyOf").contains(method)) {
                 call.setScope(new NameExpr("java.util." + scope));
@@ -248,6 +328,10 @@ final class ProgramLowerer {
             }
             String scopeType = expressionType(original.getScope().orElse(new NameExpr("$unknown")));
             if (scopeType == null && original.getScope().orElse(null) instanceof FieldAccessExpr access && access.getScope() instanceof ThisExpr) scopeType = originalTypes.get(access.getNameAsString());
+            if (scopeType != null && scopeType.equals("VecDelta") && method.equals("stepCount") && original.getArguments().isEmpty()) { call.setScope((Expression) original.getScope().orElseThrow().accept(this, null)); return call; }
+            if (scopeType != null && scopeType.startsWith("Pair<") && Set.of("getFirst", "getSecond").contains(method) && original.getArguments().isEmpty()) {
+                call.setScope((Expression) call.getScope().orElseThrow().accept(this, null)); call.setName(method.equals("getFirst") ? "first" : "second"); return call;
+            }
             if (scopeType != null && Set.of("isPresent", "isEmpty", "get", "orElse", "orElseThrow", "size", "add", "put", "contains", "iterator").contains(method) && scopeType.matches("(?:Optional|List|Set|Map|ArrayList|HashSet|Collection)<.*")) {
                 call.setScope((Expression) call.getScope().orElseThrow().accept(this, null));
                 for (int i = 0; i < call.getArguments().size(); i++) call.setArgument(i, (Expression) call.getArgument(i).accept(this, null)); return call;
@@ -325,6 +409,21 @@ final class ProgramLowerer {
                 }
             } catch (Unsupported projectionMissing) { }
             throw new Unsupported("Imperative code constructs a game object: " + creation);
+        }
+        @Override public Visitable visit(CastExpr cast, Void ignored) {
+            String originalType = cast.getTypeAsString(); super.visit(cast, ignored);
+            if (!cast.getType().isPrimitiveType()) cast.setType(StaticJavaParser.parseType(valueType(originalType).type()));
+            return cast;
+        }
+        @Override public Visitable visit(ArrayCreationExpr creation, Void ignored) {
+            String component = creation.getElementType().asString();
+            if (creation.getLevels().size() != 1 || creation.getLevels().get(0).getDimension().isEmpty()) throw new Unsupported("Array allocation is not a bounded one-dimensional wire array");
+            Expression count = creation.getLevels().get(0).getDimension().get();
+            if (!(count instanceof IntegerLiteralExpr literal && literal.asNumber().intValue() >= 0 && literal.asNumber().intValue() <= 65536)) {
+                if (encode || !(count instanceof NameExpr name) || !boundedArrayCounts.contains(name.getNameAsString())) throw new Unsupported("Array allocation count has no proven input-byte bound");
+                creation.getLevels().get(0).setDimension(expression("WireCodecs.boundedCount(" + count + ", " + buffer + ".readableBytes())"));
+            }
+            Wire wire = valueType(component); creation.setElementType(StaticJavaParser.parseType(wire.type())); return creation;
         }
         @Override public Visitable visit(VariableDeclarationExpr declaration, Void ignored) {
             super.visit(declaration, ignored);
