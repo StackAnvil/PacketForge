@@ -350,21 +350,10 @@ final class Analyzer {
         for (var registration : registrations)
             if (!keys.add(registration.state() + ":" + registration.flow() + ":" + registration.id()))
                 throw new Unsupported("Duplicate protocol registration");
+        var schemaGraph = new SchemaGraph(models, List.copyOf(dispatches.values()));
         List<Registration> checked = new ArrayList<>();
         for (var entry : registrations) {
-            String missing = entry.supported()
-                    ? missingSchema(
-                            models.values().stream()
-                                    .filter(m -> m.generatedName().equals(entry.generatedClass()))
-                                    .findFirst()
-                                    .orElseThrow(),
-                            new HashSet<>())
-                    : "";
-            if (missing.isEmpty()
-                    && entry.supported()
-                    && entry.contextRule() != null
-                    && !entry.contextRule().fallbackModel().isEmpty())
-                missing = missingSchema(models.get(entry.contextRule().fallbackModel()), new HashSet<>());
+            String missing = entry.supported() ? schemaGraph.missing(entry) : "";
             checked.add(
                     missing.isEmpty()
                             ? entry
@@ -382,34 +371,6 @@ final class Analyzer {
                                     ""));
         }
         return List.copyOf(checked);
-    }
-
-    private String missingSchema(Model model, Set<String> visited) {
-        if (!visited.add("model:" + model.originalName())) return "";
-        String text = model.fields().toString() + " " + model.program();
-        return missingSchema(text, visited);
-    }
-
-    private String missingSchema(String text, Set<String> visited) {
-        var references = java.util.regex.Pattern.compile("GeneratedWireCodecs\\.(dispatch_[0-9]+)")
-                .matcher(text);
-        while (references.find()) {
-            String name = references.group(1);
-            if (!visited.add(name)) continue;
-            Dispatch definition = dispatches.get(name);
-            if (definition == null) return "Unresolved recursive codec table: " + name;
-            String missing = missingSchema(definition.implementation().codec(), visited);
-            if (!missing.isEmpty()) return missing;
-        }
-        for (var candidate : models.values())
-            if (java.util.regex.Pattern.compile(
-                            "\\b" + java.util.regex.Pattern.quote(candidate.generatedName()) + "\\b")
-                    .matcher(text)
-                    .find()) {
-                String missing = missingSchema(candidate, visited);
-                if (!missing.isEmpty()) return missing;
-            }
-        return "";
     }
 
     private void collectChain(Expression expression, String builder, List<MethodCallExpr> chain) {
