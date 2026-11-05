@@ -28,6 +28,28 @@ public final class WireCodecs {
             public void encode(ByteBuf output, T value) { write.accept(output, value); }
         };
     }
+    public static final PacketCodec<Unit> UNIT = of(b -> Unit.INSTANCE, (b, value) -> { if (value != Unit.INSTANCE) throw new IllegalArgumentException("Expected unit value"); });
+    public static <T> PacketCodec<T> lazy(java.util.function.Supplier<PacketCodec<T>> supplier) {
+        return new PacketCodec<>() {
+            private volatile PacketCodec<T> codec;
+            private PacketCodec<T> resolved() {
+                PacketCodec<T> value = codec;
+                if (value == null) synchronized (this) { value = codec; if (value == null) codec = value = java.util.Objects.requireNonNull(supplier.get()); }
+                return value;
+            }
+            public T decode(ByteBuf input) { return resolved().decode(input); }
+            public void encode(ByteBuf output, T value) { resolved().encode(output, value); }
+        };
+    }
+    public static <K> PacketCodec<Variant<K>> dispatch(PacketCodec<K> key, Map<K, PacketCodec<?>> cases) {
+        Map<K, PacketCodec<?>> table = Map.copyOf(cases);
+        return of(b -> { K type = key.decode(b); PacketCodec<?> codec = table.get(type); if (codec == null) throw new IllegalArgumentException("Unknown codec discriminator: " + type); return new Variant<>(type, codec.decode(b)); },
+            (b, value) -> {
+                @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) table.get(value.type());
+                if (codec == null) throw new IllegalArgumentException("Unknown codec discriminator: " + value.type());
+                key.encode(b, value.type()); codec.encode(b, value.value());
+            });
+    }
     public static final PacketCodec<Boolean> BOOL = of(ByteBuf::readBoolean, ByteBuf::writeBoolean);
     public static final PacketCodec<Byte> BYTE = of(ByteBuf::readByte, (b, v) -> b.writeByte(v));
     public static final PacketCodec<Integer> UNSIGNED_BYTE = of(b -> (int) b.readUnsignedByte(), ByteBuf::writeByte);
@@ -65,6 +87,23 @@ public final class WireCodecs {
     public static <A, B> PacketCodec<B> mapped(PacketCodec<A> original, Function<A, B> decode, Function<B, A> encode) {
         return of(b -> decode.apply(original.decode(b)), (b, value) -> original.encode(b, encode.apply(value)));
     }
+    public static <T> PacketCodec<T> lengthPrefixed(PacketCodec<T> original, int maxBytes) {
+        if (maxBytes < 0) throw new IllegalArgumentException("Negative payload limit");
+        return of(b -> { int count = checkedLength(VAR_INT.decode(b), Math.min(maxBytes, b.readableBytes())); return original.decode(b.readSlice(count)); },
+            (b, value) -> {
+                ByteBuf scratch = b.alloc().buffer();
+                try { original.encode(scratch, value); checkedLength(scratch.readableBytes(), maxBytes); VAR_INT.encode(b, scratch.readableBytes()); b.writeBytes(scratch); }
+                finally { scratch.release(); }
+            });
+    }
+    public static PacketCodec<BitSet> fixedBitSet(int bits) {
+        if (bits < 0 || bits > Integer.MAX_VALUE - 7) throw new IllegalArgumentException("Invalid bit count");
+        int bytes = (bits + 7) / 8;
+        return mapped(fixedBytes(bytes), BitSet::valueOf, value -> {
+            if (value.length() > bits) throw new IllegalArgumentException("Bit set exceeds fixed width");
+            return java.util.Arrays.copyOf(value.toByteArray(), bytes);
+        });
+    }
     public static <T> PacketCodec<List<T>> fixedList(PacketCodec<T> element, int size) {
         if (size < 0) throw new IllegalArgumentException("Negative list size");
         return of(b -> { List<T> values = new ArrayList<>(Math.min(size, 65536)); for (int i = 0; i < size; i++) values.add(element.decode(b)); return List.copyOf(values); },
@@ -80,6 +119,18 @@ public final class WireCodecs {
             for (int i = 0; i < count; i++) values.put(key.decode(b), value.decode(b));
             return java.util.Collections.unmodifiableMap(values);
         }, (b, values) -> { checkedLength(values.size(), maxSize); VAR_INT.encode(b, values.size()); values.forEach((k, v) -> { key.encode(b, k); value.encode(b, v); }); });
+    }
+    public static <T> PacketCodec<RegistryValue<T>> registryValue(PacketCodec<T> direct) {
+        return of(b -> {
+            int id = VAR_INT.decode(b);
+            if (id < 0) throw new IllegalArgumentException("Negative registry wire ID");
+            return id == 0 ? new RegistryValue.Direct<>(direct.decode(b)) : new RegistryValue.Reference<>(id - 1);
+        }, (b, value) -> {
+            switch (value) {
+                case RegistryValue.Reference<T> reference -> VAR_INT.encode(b, reference.id() + 1);
+                case RegistryValue.Direct<T> inline -> { VAR_INT.encode(b, 0); direct.encode(b, inline.value()); }
+            }
+        });
     }
     public static <L, R> PacketCodec<Either<L, R>> either(PacketCodec<L> left, PacketCodec<R> right) {
         return of(b -> b.readBoolean() ? Either.left(left.decode(b)) : Either.right(right.decode(b)), (b, value) -> {
@@ -119,6 +170,11 @@ public final class WireCodecs {
             VAR_INT.encode(b, data.length); b.writeBytes(data);
         });
     }
+    public static PacketCodec<byte[]> fixedBytes(int size) {
+        if (size < 0) throw new IllegalArgumentException("Negative byte array size");
+        return of(b -> { checkedLength(size, b.readableBytes()); byte[] value = new byte[size]; b.readBytes(value); return value; }, (b, value) -> { if (value.length != size) throw new IllegalArgumentException("Wrong byte array size"); b.writeBytes(value); });
+    }
+    public static void readFixedInto(ByteBuf input, byte[] value) { input.readBytes(value); }
     public static PacketCodec<byte[]> byteArray(int maxLength) {
         if (maxLength < 0) throw new IllegalArgumentException("Negative array limit");
         return of(b -> { int size = checkedLength(VAR_INT.decode(b), Math.min(maxLength, b.readableBytes())); byte[] data = new byte[size]; b.readBytes(data); return data; },

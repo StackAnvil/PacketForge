@@ -2,7 +2,7 @@
 
 PacketForge generates a standalone Minecraft protocol library from the official server jar. It uses Vineflower and JavaParser to recover packet registrations and serialization operations.
 
-This is an experimental generator, inspired by [MCProtocolLib](https://github.com/GeyserMC/MCProtocolLib). It is not a drop-in replacement. Minecraft 26.3 uses protocol version 777. The current generator emits codecs for **156 of 260 packet registrations**. It reports the other 104 with their IDs, source locations, and rejection reasons.
+This is an experimental generator, inspired by [MCProtocolLib](https://github.com/GeyserMC/MCProtocolLib). It is not a drop-in replacement. Minecraft 26.3 uses protocol version 777. The current generator emits codecs for **210 of 260 packet registrations**. It reports the other 50 with their IDs, source locations, and rejection reasons.
 
 ## Build
 
@@ -24,7 +24,7 @@ Minecraft files stay under `build/minecraft/26.3/`. Generated Java files stay un
 | `commons` | Provide Netty buffer codecs, packet interfaces, packed block positions, and an immutable packet registry. |
 | `protocol` | Generate and compile the 26.3 library. Publish it separately from the generator. |
 
-The generated protocol depends only on `commons` and Netty. Minecraft, Vineflower, and JavaParser are absent from its runtime dependencies. Packet records expose a `CODEC` and implement `Packet.serialize(ByteBuf)`.
+The generated protocol depends on `commons`, Netty, and Gson. Minecraft, Vineflower, and JavaParser are absent from its runtime dependencies. Packet records expose a `CODEC` and implement `Packet.serialize(ByteBuf)`.
 
 ```java
 import org.stackanvil.packetforge.protocol.GeneratedProtocol;
@@ -43,15 +43,15 @@ var received = registry.decode(state, flow, completePacketBodyWithId);
 
 `SourceIndex` resolves explicit imports and nested declarations without loading game classes. `Analyzer` walks each fluent protocol builder from its receiver outward. Registration order determines numeric IDs. A bundle delimiter consumes a wire ID. The enclosing builder determines protocol state and direction.
 
-The analyzer lowers accepted codecs into a small intermediate representation. Each field records its original type, generated type, decoder, encoder, and wire shape. The emitter creates new source files from that representation. It does not copy packet methods or listener code.
+The analyzer lowers accepted codecs into a small intermediate representation. Each field records its original type, generated type, decoder, encoder, and wire shape. The emitter creates standalone source files from that representation. `ProgramLowerer` translates serialization bodies, local variables, branches, bit operations, and small static helpers. It omits game listeners and unrelated methods.
 
 Supported patterns include direct buffer constructors and writers, record constructor delegation, `Packet.codec`, `StreamCodec.unit`, and `StreamCodec.composite`, wrapper mappings, and constructor/writer pairs for nested data. Validation guards remain in generated constructors. Shared wire codecs cover primitives, variable integers, bounded UTF-8, UUIDs, identifiers, byte arrays, packed block positions, nullable values, optional values, maps, sets, fixed-size lists, and ordinary lists. Movement vectors use standalone value types and shared codecs for their full and compact representations. The analyzer also follows supported codec aliases and nested value codecs.
 
-The analyzer checks field order and matching read/write operations. It recovers ordinal enums, continuous enum ID maps and their fallback rules, and matching enum switch expressions. Registry values use numeric wire IDs in the generated API. The application must supply meaning for those IDs.
+For linear layouts, the analyzer checks field order and matching read/write operations. For imperative layouts, it translates the control flow and compares wire operation kinds. It recovers ordinal enums, continuous enum ID maps and their fallback rules, and matching enum switch expressions. Registry values use numeric wire IDs or `RegistryValue<T>` for references with an inline alternative. NBT-backed fields use `NbtTag`, and JSON-backed fields use Gson `JsonElement`. Applications interpret the registry IDs and NBT schemas. Generated records describe wire values, and the report records their original types and factories.
 
 Unknown packet layouts remain in `GeneratedProtocol.DESCRIPTORS` and the JSON report. They have no registered codec. Their original IDs remain reserved. Unknown registration operations fail generation because they can shift every later ID.
 
-Most remaining work concerns registry-backed NBT codecs, data components, item stacks, polymorphic payloads, inherited layouts, and control flow such as bit packing. Add a lowering rule to `Analyzer`, add a wire primitive to `commons` when needed, and add behavior tests. A Java bytecode data-flow pass is a useful next step for layouts that Vineflower represents with temporary variables and branches.
+Enum dispatch tables produce `Variant<K>` payloads and shared lazy codec tables. These cover filter masks and position paths. Remaining work concerns registry dispatch, data components, item stacks, custom payloads, context-dependent codecs, and several specialized layouts. Add a lowering rule to `Analyzer`, add a wire primitive to `commons` when needed, and add behavior tests. A Java bytecode data-flow pass is a useful next step for layouts that Vineflower represents with temporary variables and branches.
 
 ## Generator CLI
 
@@ -66,6 +66,6 @@ The generator can reuse existing decompiled sources. Relative paths resolve from
 
 ## Validation
 
-`./gradlew test` tests malformed wire inputs, field mismatches, generated Java compilation, and packet ID preservation. It also round-trips three samples for every generated registration. The compatibility test decodes and re-encodes those bodies with vanilla, plus 17 focused samples. It loads the verified server jar and its dependencies in an isolated class loader and initializes vanilla registries. This runs in tests only.
+`./gradlew test` tests malformed wire inputs, field mismatches, generated Java compilation, and packet ID preservation. It round-trips three sample cases for each generated registration. Imperative codecs also receive mutations of valid seed bodies. Focused tests exercise conditional fields and bit flags. The compatibility test loads the verified server jar in an isolated class loader and initializes vanilla registries. This runs in tests only.
 
-These tests cover 468 generated round trips and 485 vanilla comparisons for 26.3. They do not prove correctness for every value or provide a live client/server interoperability test. Other Minecraft versions are not validated. The coverage report includes exact input hashes and tool versions for reproducing the extraction.
+The current suite covers 630 generated round trips and 1,623 vanilla comparisons for 26.3. It compares encoded bytes, then compares complete decoded wire values when unordered NBT entries change order. Sample cases do not prove every value or branch. Live client/server interoperability and other Minecraft versions are not validated. The coverage report includes exact input hashes and tool versions for reproducing the extraction.

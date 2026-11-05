@@ -18,6 +18,7 @@ sourceSets.main {
     resources.srcDir(generateProtocol.map { generated.get().dir("resources") })
 }
 tasks.test {
+    maxHeapSize = "1g"
     systemProperty("packetforge.cache", rootProject.layout.buildDirectory.dir("minecraft").get().asFile.absolutePath)
     systemProperty("packetforge.version", minecraftVersion.get())
 }
