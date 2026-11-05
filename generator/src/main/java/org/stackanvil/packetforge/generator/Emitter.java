@@ -9,25 +9,74 @@ import java.util.*;
 
 final class Emitter {
     private static final String PACKAGE = "org.stackanvil.packetforge.protocol";
-    private static final String IMPORTS = "import io.netty.buffer.ByteBuf;\nimport org.stackanvil.packetforge.commons.*;\n";
-    private static final Gson JSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
-    record Report(Map<String, String> provenance, int totalRegistrations, int generatedRegistrations,
-                  int generatedModels, List<Analyzer.Registration> registrations, List<Analyzer.Model> models, List<Analyzer.Dispatch> dispatches, Map<String, List<Analyzer.RegistryGap>> registryGaps) {}
+    private static final String IMPORTS =
+            "import io.netty.buffer.ByteBuf;\nimport org.stackanvil.packetforge.commons.*;\n";
+    private static final Gson JSON =
+            new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
-    Report emit(Path output, Map<String, String> provenance, int protocol, List<Analyzer.Registration> registrations, Map<String, Analyzer.Model> allModels) throws IOException {
+    record Report(
+            Map<String, String> provenance,
+            int totalRegistrations,
+            int generatedRegistrations,
+            int generatedModels,
+            List<Analyzer.Registration> registrations,
+            List<Analyzer.Model> models,
+            List<Analyzer.Dispatch> dispatches,
+            Map<String, List<Analyzer.RegistryGap>> registryGaps) {}
+
+    Report emit(
+            Path output,
+            Map<String, String> provenance,
+            int protocol,
+            List<Analyzer.Registration> registrations,
+            Map<String, Analyzer.Model> allModels)
+            throws IOException {
         return emit(output, provenance, protocol, registrations, allModels, List.of());
     }
-    Report emit(Path output, Map<String, String> provenance, int protocol, List<Analyzer.Registration> registrations, Map<String, Analyzer.Model> allModels, List<Analyzer.Dispatch> dispatches) throws IOException {
+
+    Report emit(
+            Path output,
+            Map<String, String> provenance,
+            int protocol,
+            List<Analyzer.Registration> registrations,
+            Map<String, Analyzer.Model> allModels,
+            List<Analyzer.Dispatch> dispatches)
+            throws IOException {
         return emit(output, provenance, protocol, registrations, allModels, dispatches, Map.of());
     }
-    Report emit(Path output, Map<String, String> provenance, int protocol, List<Analyzer.Registration> registrations, Map<String, Analyzer.Model> allModels, List<Analyzer.Dispatch> dispatches, Map<String, List<Analyzer.RegistryGap>> registryGaps) throws IOException {
+
+    Report emit(
+            Path output,
+            Map<String, String> provenance,
+            int protocol,
+            List<Analyzer.Registration> registrations,
+            Map<String, Analyzer.Model> allModels,
+            List<Analyzer.Dispatch> dispatches,
+            Map<String, List<Analyzer.RegistryGap>> registryGaps)
+            throws IOException {
         Set<String> reachable = new TreeSet<>();
-        for (var entry : registrations) if (entry.supported()) visit(allModels.values().stream().filter(m -> m.generatedName().equals(entry.generatedClass())).findFirst().orElseThrow().originalName(), allModels, reachable);
-        for (var entry : registrations) if (entry.supported() && entry.contextRule() != null && !entry.contextRule().fallbackModel().isEmpty()) visit(entry.contextRule().fallbackModel(), allModels, reachable);
+        for (var entry : registrations)
+            if (entry.supported())
+                visit(
+                        allModels.values().stream()
+                                .filter(m -> m.generatedName().equals(entry.generatedClass()))
+                                .findFirst()
+                                .orElseThrow()
+                                .originalName(),
+                        allModels,
+                        reachable);
+        for (var entry : registrations)
+            if (entry.supported()
+                    && entry.contextRule() != null
+                    && !entry.contextRule().fallbackModel().isEmpty())
+                visit(entry.contextRule().fallbackModel(), allModels, reachable);
         List<Analyzer.Model> models = reachable.stream().map(allModels::get).toList();
         if (Files.exists(output) && !Files.exists(output.resolve(".packetforge-output"))) {
             try (var contents = Files.list(output)) {
-                if (contents.findAny().isPresent()) throw new IOException("Refusing to overwrite a nonempty directory that PacketForge does not own: " + output);
+                if (contents.findAny().isPresent())
+                    throw new IOException(
+                            "Refusing to overwrite a nonempty directory that PacketForge does not own: "
+                                    + output);
             }
         }
         Artifacts.deleteTree(output);
@@ -38,133 +87,405 @@ final class Emitter {
         do {
             int previous = reachable.size() + neededDispatches.size();
             for (var dispatch : dispatches) {
-                boolean referenced = reachable.stream().map(allModels::get).anyMatch(model -> modelText(model).contains("GeneratedWireCodecs." + dispatch.name()))
-                    || dispatches.stream().filter(d -> neededDispatches.contains(d.name())).anyMatch(d -> d.implementation().codec().contains("GeneratedWireCodecs." + dispatch.name()));
+                boolean referenced =
+                        reachable.stream()
+                                        .map(allModels::get)
+                                        .anyMatch(
+                                                model ->
+                                                        modelText(model)
+                                                                .contains(
+                                                                        "GeneratedWireCodecs."
+                                                                                + dispatch.name()))
+                                || dispatches.stream()
+                                        .filter(d -> neededDispatches.contains(d.name()))
+                                        .anyMatch(
+                                                d ->
+                                                        d.implementation()
+                                                                .codec()
+                                                                .contains(
+                                                                        "GeneratedWireCodecs."
+                                                                                + dispatch.name()));
                 if (!referenced) continue;
                 neededDispatches.add(dispatch.name());
-                for (var candidate : allModels.values()) if (dispatch.cases().stream().anyMatch(c -> mentions(c.value().type() + " " + c.value().codec(), candidate.generatedName()))) visit(candidate.originalName(), allModels, reachable);
+                for (var candidate : allModels.values())
+                    if (dispatch.cases().stream()
+                            .anyMatch(
+                                    c ->
+                                            mentions(
+                                                    c.value().type() + " " + c.value().codec(),
+                                                    candidate.generatedName())))
+                        visit(candidate.originalName(), allModels, reachable);
             }
             changed = previous != reachable.size() + neededDispatches.size();
         } while (changed);
-        List<Analyzer.Dispatch> selectedDispatches = dispatches.stream().filter(d -> neededDispatches.contains(d.name())).toList();
+        List<Analyzer.Dispatch> selectedDispatches =
+                dispatches.stream().filter(d -> neededDispatches.contains(d.name())).toList();
         models = reachable.stream().map(allModels::get).toList();
         for (var model : models) emitModel(output, model);
         emitDispatches(output, selectedDispatches);
         emitRegistry(output, protocol, registrations, allModels);
         int count = (int) registrations.stream().filter(Analyzer.Registration::supported).count();
-        Report report = new Report(new TreeMap<>(provenance), registrations.size(), count, models.size(), registrations, models, selectedDispatches, new TreeMap<>(registryGaps));
+        Report report =
+                new Report(
+                        new TreeMap<>(provenance),
+                        registrations.size(),
+                        count,
+                        models.size(),
+                        registrations,
+                        models,
+                        selectedDispatches,
+                        new TreeMap<>(registryGaps));
         Path reportFile = output.resolve("resources/packetforge/protocol.json");
         Files.createDirectories(reportFile.getParent());
         Files.writeString(reportFile, JSON.toJson(report) + "\n");
-        System.out.println("Generated " + count + "/" + registrations.size() + " packet registrations and " + models.size() + " models. Report: " + reportFile);
+        System.out.println(
+                "Generated "
+                        + count
+                        + "/"
+                        + registrations.size()
+                        + " packet registrations and "
+                        + models.size()
+                        + " models. Report: "
+                        + reportFile);
         return report;
     }
+
     private void visit(String name, Map<String, Analyzer.Model> models, Set<String> reachable) {
         if (!reachable.add(name)) return;
         Analyzer.Model model = models.get(name);
         for (var candidate : models.values()) {
-            if (mentions(modelText(model), candidate.generatedName())) visit(candidate.originalName(), models, reachable);
+            if (mentions(modelText(model), candidate.generatedName()))
+                visit(candidate.originalName(), models, reachable);
         }
     }
+
     private static String modelText(Analyzer.Model model) {
-        String text = model.fields().stream().map(f -> f.read().type() + " " + f.read().codec() + " " + f.write().codec()).collect(java.util.stream.Collectors.joining(" "));
-        if (model.program() != null) text += " " + model.program().decode() + " " + model.program().encode() + " " + String.join(" ", model.program().helpers());
+        String text =
+                model.fields().stream()
+                        .map(
+                                f ->
+                                        f.read().type()
+                                                + " "
+                                                + f.read().codec()
+                                                + " "
+                                                + f.write().codec())
+                        .collect(java.util.stream.Collectors.joining(" "));
+        if (model.program() != null)
+            text +=
+                    " "
+                            + model.program().decode()
+                            + " "
+                            + model.program().encode()
+                            + " "
+                            + String.join(" ", model.program().helpers());
         return text;
     }
-    private static boolean mentions(String text, String identifier) { return java.util.regex.Pattern.compile("\\b" + java.util.regex.Pattern.quote(identifier) + "\\b").matcher(text).find(); }
+
+    private static boolean mentions(String text, String identifier) {
+        return java.util.regex.Pattern.compile(
+                        "\\b" + java.util.regex.Pattern.quote(identifier) + "\\b")
+                .matcher(text)
+                .find();
+    }
+
     private void emitModel(Path output, Analyzer.Model model) throws IOException {
         String fullName = model.generatedName();
         String simple = fullName.substring(fullName.lastIndexOf('.') + 1);
         StringBuilder code = new StringBuilder();
-        code.append("// Generated by PacketForge. Regenerate instead of editing.\npackage ").append(fullName, 0, fullName.lastIndexOf('.')).append(";\n\n");
+        code.append("// Generated by PacketForge. Regenerate instead of editing.\npackage ")
+                .append(fullName, 0, fullName.lastIndexOf('.'))
+                .append(";\n\n");
         if (!model.constants().isEmpty()) {
-            code.append("public enum ").append(simple).append(" {\n    ").append(String.join(", ", model.constants())).append("\n}\n");
+            code.append("public enum ")
+                    .append(simple)
+                    .append(" {\n    ")
+                    .append(String.join(", ", model.constants()))
+                    .append("\n}\n");
         } else {
             code.append(IMPORTS).append("\npublic record ").append(simple).append("(");
-            code.append(String.join(", ", model.fields().stream().map(f -> f.read().type() + " " + f.name()).toList()));
+            code.append(
+                    String.join(
+                            ", ",
+                            model.fields().stream()
+                                    .map(f -> f.read().type() + " " + f.name())
+                                    .toList()));
             code.append(")").append(model.packet() ? " implements Packet" : "").append(" {\n");
-            if (!model.validations().isEmpty()) code.append("    public ").append(simple).append(" {\n").append(String.join("\n", model.validations())).append("\n    }\n");
+            if (!model.validations().isEmpty())
+                code.append("    public ")
+                        .append(simple)
+                        .append(" {\n")
+                        .append(String.join("\n", model.validations()))
+                        .append("\n    }\n");
             if (model.program() == null) {
                 for (int i = 0; i < model.fields().size(); i++) {
                     var field = model.fields().get(i);
-                    code.append("    private static final PacketCodec<").append(Analyzer.boxed(field.read().type())).append("> READ_").append(i).append(" = ").append(field.read().codec()).append(";\n");
-                    code.append("    private static final PacketCodec<").append(Analyzer.boxed(field.write().type())).append("> WRITE_").append(i).append(" = ").append(field.write().codec().equals(field.read().codec()) ? "READ_" + i : field.write().codec()).append(";\n");
+                    code.append("    private static final PacketCodec<")
+                            .append(Analyzer.boxed(field.read().type()))
+                            .append("> READ_")
+                            .append(i)
+                            .append(" = ")
+                            .append(field.read().codec())
+                            .append(";\n");
+                    code.append("    private static final PacketCodec<")
+                            .append(Analyzer.boxed(field.write().type()))
+                            .append("> WRITE_")
+                            .append(i)
+                            .append(" = ")
+                            .append(
+                                    field.write().codec().equals(field.read().codec())
+                                            ? "READ_" + i
+                                            : field.write().codec())
+                            .append(";\n");
                 }
             }
-            code.append("    public static final PacketCodec<").append(simple).append("> CODEC = ").append(model.decodeFailure().isEmpty() ? "" : "WireCodecs.skipDecodeFailures(").append("new PacketCodec<>() {\n        public ").append(simple).append(" decode(ByteBuf input) {\n");
+            code.append("    public static final PacketCodec<")
+                    .append(simple)
+                    .append("> CODEC = ")
+                    .append(model.decodeFailure().isEmpty() ? "" : "WireCodecs.skipDecodeFailures(")
+                    .append("new PacketCodec<>() {\n        public ")
+                    .append(simple)
+                    .append(" decode(ByteBuf input) {\n");
             if (model.program() != null) code.append(model.program().decode()).append("\n");
             else {
                 for (int i = 0; i < model.fields().size(); i++) {
                     var field = model.fields().get(i);
-                    code.append("            ").append(field.read().type()).append(" ").append("$field_").append(field.name()).append(" = READ_").append(i).append(".decode(input);\n");
+                    code.append("            ")
+                            .append(field.read().type())
+                            .append(" ")
+                            .append("$field_")
+                            .append(field.name())
+                            .append(" = READ_")
+                            .append(i)
+                            .append(".decode(input);\n");
                 }
-                code.append("            return new ").append(simple).append("(").append(String.join(", ", model.fields().stream().map(f -> "$field_" + f.name()).toList())).append(");\n");
+                code.append("            return new ")
+                        .append(simple)
+                        .append("(")
+                        .append(
+                                String.join(
+                                        ", ",
+                                        model.fields().stream()
+                                                .map(f -> "$field_" + f.name())
+                                                .toList()))
+                        .append(");\n");
             }
-            code.append("        }\n        public void encode(ByteBuf output, ").append(simple).append(" value) {\n");
+            code.append("        }\n        public void encode(ByteBuf output, ")
+                    .append(simple)
+                    .append(" value) {\n");
             if (model.program() != null) code.append(model.program().encode()).append("\n");
-            else for (int i = 0; i < model.fields().size(); i++) code.append("            WRITE_").append(i).append(".encode(output, value.").append(model.fields().get(i).name()).append("());\n");
-            code.append("        }\n    }").append(model.decodeFailure().isEmpty() ? ";\n" : ");\n");
-            if (model.program() != null) for (var helper : model.program().helpers()) code.append(helper).append("\n");
-            if (model.packet()) code.append("    @Override public void serialize(ByteBuf output) { CODEC.encode(output, this); }\n");
+            else
+                for (int i = 0; i < model.fields().size(); i++)
+                    code.append("            WRITE_")
+                            .append(i)
+                            .append(".encode(output, value.")
+                            .append(model.fields().get(i).name())
+                            .append("());\n");
+            code.append("        }\n    }")
+                    .append(model.decodeFailure().isEmpty() ? ";\n" : ");\n");
+            if (model.program() != null)
+                for (var helper : model.program().helpers()) code.append(helper).append("\n");
+            if (model.packet())
+                code.append(
+                        "    @Override public void serialize(ByteBuf output) { CODEC.encode(output, this); }\n");
             code.append("}\n");
         }
         writeJava(output, fullName, code.toString());
     }
-    private void emitDispatches(Path output, List<Analyzer.Dispatch> dispatches) throws IOException {
-        StringBuilder code = new StringBuilder("// Generated by PacketForge. Regenerate instead of editing.\npackage " + PACKAGE + ";\n\n" + IMPORTS);
-        code.append("public final class GeneratedWireCodecs {\n    private GeneratedWireCodecs() {}\n");
-        for (var dispatch : dispatches) code.append("    public static final PacketCodec<").append(Analyzer.boxed(dispatch.implementation().type())).append("> ").append(dispatch.name()).append(" = WireCodecs.lazy(() -> ").append(dispatch.implementation().codec()).append(");\n");
-        for (var dispatch : dispatches) if (dispatch.registry().equals("DATA_COMPONENT_TYPE") || dispatch.registry().equals("COMMAND_ARGUMENT_TYPE") || dispatch.originalExpression().startsWith("enum-actions:")) {
-            boolean actions = dispatch.originalExpression().startsWith("enum-actions:"); String key = actions ? dispatch.key().type() : "Integer";
-            code.append("    public static java.util.Map<").append(key).append(", PacketCodec<?>> ").append(dispatch.name()).append("_payloads() { return java.util.Map.<").append(key).append(", PacketCodec<?>>ofEntries(");
-            code.append(String.join(", ", dispatch.cases().stream().map(c -> "java.util.Map.entry(" + (actions ? key + "." : "") + c.key() + ", (PacketCodec<?>) " + c.value().codec() + ")").toList()));
-            code.append("); }\n");
-        }
-        code.append("}\n"); writeJava(output, PACKAGE + ".GeneratedWireCodecs", code.toString());
+
+    private void emitDispatches(Path output, List<Analyzer.Dispatch> dispatches)
+            throws IOException {
+        StringBuilder code =
+                new StringBuilder(
+                        "// Generated by PacketForge. Regenerate instead of editing.\npackage "
+                                + PACKAGE
+                                + ";\n\n"
+                                + IMPORTS);
+        code.append(
+                "public final class GeneratedWireCodecs {\n    private GeneratedWireCodecs() {}\n");
+        for (var dispatch : dispatches)
+            code.append("    public static final PacketCodec<")
+                    .append(Analyzer.boxed(dispatch.implementation().type()))
+                    .append("> ")
+                    .append(dispatch.name())
+                    .append(" = WireCodecs.lazy(() -> ")
+                    .append(dispatch.implementation().codec())
+                    .append(");\n");
+        for (var dispatch : dispatches)
+            if (dispatch.registry().equals("DATA_COMPONENT_TYPE")
+                    || dispatch.registry().equals("COMMAND_ARGUMENT_TYPE")
+                    || dispatch.originalExpression().startsWith("enum-actions:")) {
+                boolean actions = dispatch.originalExpression().startsWith("enum-actions:");
+                String key = actions ? dispatch.key().type() : "Integer";
+                code.append("    public static java.util.Map<")
+                        .append(key)
+                        .append(", PacketCodec<?>> ")
+                        .append(dispatch.name())
+                        .append("_payloads() { return java.util.Map.<")
+                        .append(key)
+                        .append(", PacketCodec<?>>ofEntries(");
+                code.append(
+                        String.join(
+                                ", ",
+                                dispatch.cases().stream()
+                                        .map(
+                                                c ->
+                                                        "java.util.Map.entry("
+                                                                + (actions ? key + "." : "")
+                                                                + c.key()
+                                                                + ", (PacketCodec<?>) "
+                                                                + c.value().codec()
+                                                                + ")")
+                                        .toList()));
+                code.append("); }\n");
+            }
+        code.append("}\n");
+        writeJava(output, PACKAGE + ".GeneratedWireCodecs", code.toString());
     }
-    private void emitRegistry(Path output, int protocol, List<Analyzer.Registration> registrations, Map<String, Analyzer.Model> models) throws IOException {
-        StringBuilder code = new StringBuilder("// Generated by PacketForge. Regenerate instead of editing.\npackage " + PACKAGE + ";\n\n" + IMPORTS);
-        code.append("import java.util.List;\nimport static org.stackanvil.packetforge.commons.PacketRegistry.*;\n\npublic final class GeneratedProtocol {\n");
-        code.append("    private GeneratedProtocol() {}\n    public static final int PROTOCOL_VERSION = ").append(protocol).append(";\n");
-        List<String> flags = registrations.stream().filter(Analyzer.Registration::supported).map(Analyzer.Registration::contextRule).filter(Objects::nonNull).map(Analyzer.ContextRule::predicate).distinct().sorted().toList();
+
+    private void emitRegistry(
+            Path output,
+            int protocol,
+            List<Analyzer.Registration> registrations,
+            Map<String, Analyzer.Model> models)
+            throws IOException {
+        StringBuilder code =
+                new StringBuilder(
+                        "// Generated by PacketForge. Regenerate instead of editing.\npackage "
+                                + PACKAGE
+                                + ";\n\n"
+                                + IMPORTS);
+        code.append(
+                "import java.util.List;\nimport static org.stackanvil.packetforge.commons.PacketRegistry.*;\n\npublic final class GeneratedProtocol {\n");
+        code.append(
+                        "    private GeneratedProtocol() {}\n    public static final int PROTOCOL_VERSION = ")
+                .append(protocol)
+                .append(";\n");
+        List<String> flags =
+                registrations.stream()
+                        .filter(Analyzer.Registration::supported)
+                        .map(Analyzer.Registration::contextRule)
+                        .filter(Objects::nonNull)
+                        .map(Analyzer.ContextRule::predicate)
+                        .distinct()
+                        .sorted()
+                        .toList();
         if (!flags.isEmpty()) {
             code.append("    public interface Context {\n");
             for (String flag : flags) code.append("        boolean ").append(flag).append("();\n");
-            code.append("        Context UNRESTRICTED = of(").append(String.join(", ", flags.stream().map(f -> "true").toList())).append(");\n");
-            code.append("        static Context of(").append(String.join(", ", flags.stream().map(f -> "boolean " + f).toList())).append(") { return new FixedContext(").append(String.join(", ", flags)).append("); }\n    }\n");
-            code.append("    public record FixedContext(").append(String.join(", ", flags.stream().map(f -> "boolean " + f).toList())).append(") implements Context {}\n");
+            code.append("        Context UNRESTRICTED = of(")
+                    .append(String.join(", ", flags.stream().map(f -> "true").toList()))
+                    .append(");\n");
+            code.append("        static Context of(")
+                    .append(String.join(", ", flags.stream().map(f -> "boolean " + f).toList()))
+                    .append(") { return new FixedContext(")
+                    .append(String.join(", ", flags))
+                    .append("); }\n    }\n");
+            code.append("    public record FixedContext(")
+                    .append(String.join(", ", flags.stream().map(f -> "boolean " + f).toList()))
+                    .append(") implements Context {}\n");
         }
-        code.append("    public record Descriptor(Key key, String name, String originalClass, boolean supported, String reason) {}\n");
+        code.append(
+                "    public record Descriptor(Key key, String name, String originalClass, boolean supported, String reason) {}\n");
         code.append("    public static final List<Descriptor> DESCRIPTORS = List.of(\n");
         List<String> descriptors = new ArrayList<>(), entries = new ArrayList<>();
         for (var registration : registrations) {
-            String key = "new Key(State." + registration.state() + ", Flow." + registration.flow() + ", " + registration.id() + ")";
-            descriptors.add("        new Descriptor(" + key + ", " + quote(registration.name()) + ", " + quote(registration.originalClass()) + ", " + registration.supported() + ", " + quote(registration.reason()) + ")");
+            String key =
+                    "new Key(State."
+                            + registration.state()
+                            + ", Flow."
+                            + registration.flow()
+                            + ", "
+                            + registration.id()
+                            + ")";
+            descriptors.add(
+                    "        new Descriptor("
+                            + key
+                            + ", "
+                            + quote(registration.name())
+                            + ", "
+                            + quote(registration.originalClass())
+                            + ", "
+                            + registration.supported()
+                            + ", "
+                            + quote(registration.reason())
+                            + ")");
             if (registration.supported()) {
                 String codec = registration.generatedClass() + ".CODEC";
                 if (registration.contextRule() != null) {
                     var rule = registration.contextRule();
-                    if (rule.fallbackModel().isEmpty()) codec = "WireCodecs.gated(context::" + rule.predicate() + ", " + codec + ", " + quote(rule.rejection()) + ")";
+                    if (rule.fallbackModel().isEmpty())
+                        codec =
+                                "WireCodecs.gated(context::"
+                                        + rule.predicate()
+                                        + ", "
+                                        + codec
+                                        + ", "
+                                        + quote(rule.rejection())
+                                        + ")";
                     else {
-                        var fallback = models.get(rule.fallbackModel()); var root = models.get(rule.allowedModel());
-                        String values = String.join(", ", root.fields().stream().map(f -> "v." + f.name() + "()").toList());
-                        String adapt = "WireCodecs.<" + fallback.generatedName() + ", " + root.generatedName() + ">mapped(" + fallback.generatedName() + ".CODEC, v -> new " + root.generatedName() + "(" + values + "), v -> new " + fallback.generatedName() + "(" + values + "))";
-                        codec = "WireCodecs.selected(context::" + rule.predicate() + ", " + codec + ", " + adapt + ")";
+                        var fallback = models.get(rule.fallbackModel());
+                        var root = models.get(rule.allowedModel());
+                        String values =
+                                String.join(
+                                        ", ",
+                                        root.fields().stream()
+                                                .map(f -> "v." + f.name() + "()")
+                                                .toList());
+                        String adapt =
+                                "WireCodecs.<"
+                                        + fallback.generatedName()
+                                        + ", "
+                                        + root.generatedName()
+                                        + ">mapped("
+                                        + fallback.generatedName()
+                                        + ".CODEC, v -> new "
+                                        + root.generatedName()
+                                        + "("
+                                        + values
+                                        + "), v -> new "
+                                        + fallback.generatedName()
+                                        + "("
+                                        + values
+                                        + "))";
+                        codec =
+                                "WireCodecs.selected(context::"
+                                        + rule.predicate()
+                                        + ", "
+                                        + codec
+                                        + ", "
+                                        + adapt
+                                        + ")";
                     }
                 }
-                entries.add("        new Entry<>(" + key + ", " + quote(registration.name()) + ", " + registration.generatedClass() + ".class, " + codec + ")");
+                entries.add(
+                        "        new Entry<>("
+                                + key
+                                + ", "
+                                + quote(registration.name())
+                                + ", "
+                                + registration.generatedClass()
+                                + ".class, "
+                                + codec
+                                + ")");
             }
         }
         code.append(String.join(",\n", descriptors)).append("\n    );\n");
-        if (!flags.isEmpty()) code.append("    public static PacketRegistry registry() { return registry(Context.UNRESTRICTED); }\n    public static PacketRegistry registry(Context context) {\n        java.util.Objects.requireNonNull(context);\n");
+        if (!flags.isEmpty())
+            code.append(
+                    "    public static PacketRegistry registry() { return registry(Context.UNRESTRICTED); }\n    public static PacketRegistry registry(Context context) {\n        java.util.Objects.requireNonNull(context);\n");
         else code.append("    public static PacketRegistry registry() {\n");
         code.append("        return new PacketRegistry(List.of(\n");
         code.append(String.join(",\n", entries)).append("\n        ));\n    }\n}\n");
         writeJava(output, PACKAGE + ".GeneratedProtocol", code.toString());
     }
-    private static String quote(String text) { return JSON.toJson(text); }
+
+    private static String quote(String text) {
+        return JSON.toJson(text);
+    }
+
     private static void writeJava(Path output, String name, String code) throws IOException {
         Path file = output.resolve("java").resolve(name.replace('.', '/') + ".java");
-        Files.createDirectories(file.getParent()); Files.writeString(file, code);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, code);
     }
 }

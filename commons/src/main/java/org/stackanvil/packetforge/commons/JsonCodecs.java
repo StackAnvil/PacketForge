@@ -7,8 +7,11 @@ import com.google.gson.JsonParser;
 
 public final class JsonCodecs {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+
     private JsonCodecs() {}
+
     public static PacketCodec<JsonElement> json(int maxChars) {
-        return WireCodecs.mapped(WireCodecs.string(maxChars), JsonParser::parseString, GSON::toJson);
+        return WireCodecs.mapped(
+                WireCodecs.string(maxChars), JsonParser::parseString, GSON::toJson);
     }
 }

@@ -1,16 +1,18 @@
 package org.stackanvil.packetforge.generator;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.github.javaparser.StaticJavaParser;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import static org.junit.jupiter.api.Assertions.*;
 
 class ActionSetAnalyzerTest {
     @TempDir Path temporary;
-    private static final String SOURCE = """
+    private static final String SOURCE =
+            """
         package net.minecraft.fixture;
         class Batch {
             EnumSet<Batch.Action> actions;
@@ -51,25 +53,47 @@ class ActionSetAnalyzerTest {
             }
         }
         """;
+
     private ProgramLowerer.Lowered analyze(String body) throws Exception {
-        Path file = temporary.resolve("net/minecraft/fixture/Batch.java"); Files.createDirectories(file.getParent()); Files.writeString(file, body);
-        var analyzer = new Analyzer(temporary); var source = analyzer.index.source("net.minecraft.fixture.Batch");
-        return new ActionSetAnalyzer(analyzer).lower(StaticJavaParser.parseExpression("Packet.codec(Batch::write, Batch::new)"), source, analyzer.index.generated(source.name()));
+        Path file = temporary.resolve("net/minecraft/fixture/Batch.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, body);
+        var analyzer = new Analyzer(temporary);
+        var source = analyzer.index.source("net.minecraft.fixture.Batch");
+        return new ActionSetAnalyzer(analyzer)
+                .lower(
+                        StaticJavaParser.parseExpression("Packet.codec(Batch::write, Batch::new)"),
+                        source,
+                        analyzer.index.generated(source.name()));
     }
-    @Test void recoversTheSharedMaskAndDependentEntryPayloads() throws Exception {
+
+    @Test
+    void recoversTheSharedMaskAndDependentEntryPayloads() throws Exception {
         var lowered = analyze(SOURCE);
-        assertEquals(List.of("actions", "entries"), lowered.fields().stream().map(Analyzer.Field::name).toList());
-        assertEquals("enum-mask:net.minecraft.fixture.Batch.Action", lowered.fields().getFirst().read().shape());
+        assertEquals(
+                List.of("actions", "entries"),
+                lowered.fields().stream().map(Analyzer.Field::name).toList());
+        assertEquals(
+                "enum-mask:net.minecraft.fixture.Batch.Action",
+                lowered.fields().getFirst().read().shape());
         assertTrue(lowered.fields().get(1).read().type().contains("ActionEntry<"));
     }
-    @Test void rejectsUnmatchedActionsWireWidthsAndBuilderTransforms() {
-        for (String source : List.of(
-            SOURCE.replace("LISTED(1,", "LISTED(3,"),
-            SOURCE.replace("output.writeVarInt(entry.number())", "output.writeInt(entry.number())"),
-            SOURCE.replace("this.profileId, this.number, this.listed", "this.profileId, this.number + 1, this.listed"),
-            SOURCE.replace("this.reader = reader", "this.reader = decorate(reader)"),
-            SOURCE.replace("action : actions", "action : actions.reversed()"),
-            SOURCE.replace("this.actions, Batch.Action.class", "this.actions, Other.class"))) {
+
+    @Test
+    void rejectsUnmatchedActionsWireWidthsAndBuilderTransforms() {
+        for (String source :
+                List.of(
+                        SOURCE.replace("LISTED(1,", "LISTED(3,"),
+                        SOURCE.replace(
+                                "output.writeVarInt(entry.number())",
+                                "output.writeInt(entry.number())"),
+                        SOURCE.replace(
+                                "this.profileId, this.number, this.listed",
+                                "this.profileId, this.number + 1, this.listed"),
+                        SOURCE.replace("this.reader = reader", "this.reader = decorate(reader)"),
+                        SOURCE.replace("action : actions", "action : actions.reversed()"),
+                        SOURCE.replace(
+                                "this.actions, Batch.Action.class", "this.actions, Other.class"))) {
             assertThrows(SourceIndex.Unsupported.class, () -> analyze(source));
         }
     }

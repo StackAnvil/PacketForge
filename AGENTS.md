@@ -2,6 +2,10 @@
 
 Use JDK 25 and the checked-in Gradle wrapper. Stay on the current branch.
 
+Run `./gradlew spotlessApply` to format handwritten Java sources.
+Run `./gradlew spotlessCheck` to check formatting. The build also runs this check.
+Keep formatter targets restricted to source directories, excluding generated and decompiled files.
+
 Run `./gradlew :commons:test :generator:test` for runtime or analyzer changes.
 Run `./gradlew build` before publishing changes that affect generation.
 The protocol tests download and decompile Minecraft on their first run.

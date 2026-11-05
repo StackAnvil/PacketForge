@@ -1,4 +1,9 @@
-plugins { base }
+import com.diffplug.gradle.spotless.SpotlessExtension
+
+plugins {
+    base
+    id("com.diffplug.spotless") version "8.11.0" apply false
+}
 allprojects {
     group = "org.stackanvil.packetforge"
     version = "0.1.0-SNAPSHOT"
@@ -6,6 +11,14 @@ allprojects {
 }
 subprojects {
     apply(plugin = "java-library")
+    apply(plugin = "com.diffplug.spotless")
+    extensions.configure<SpotlessExtension> {
+        java {
+            target("src/*/java/**/*.java")
+            googleJavaFormat("1.36.1").aosp()
+            removeUnusedImports()
+        }
+    }
     extensions.configure<JavaPluginExtension> {
         toolchain.languageVersion.set(JavaLanguageVersion.of(25))
         withSourcesJar()

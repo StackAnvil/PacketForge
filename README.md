@@ -12,6 +12,8 @@ Install JDK 25, then run:
 ./gradlew build
 ```
 
+Run `./gradlew spotlessApply` to format handwritten Java sources, or `./gradlew spotlessCheck` to check them. Normal builds enforce formatting. Generated code and cached Minecraft sources are excluded from formatter targets.
+
 The first build downloads the official server bundle and verifies its SHA-1 checksum against Mojang's version metadata. It extracts the server jar and bundled libraries, verifies their SHA-256 checksums, and decompiles the server jar and bundled Brigadier library with Vineflower 1.12.0. Brigadier supplies the string-argument mode enum. The report records its SHA-256 checksum. No Minecraft class runs during generation.
 
 Minecraft files stay under `build/minecraft/26.3/`. Generated Java files stay under `protocol/build/generated/java/`. The complete coverage report is `protocol/build/generated/resources/packetforge/protocol.json`. Cached inputs and generated files are excluded from Git.
