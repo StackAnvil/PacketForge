@@ -26,8 +26,59 @@ final class VanillaVariantAudit {
     }
     static void run(ClassLoader loader, Map<String, JsonObject> models, Object registries, Class<?> byteBuf, Class<?> unpooled, Class<?> friendly, Class<?> registryAccess, Method decode, Method encode) throws Exception {
         var audit = new VanillaVariantAudit(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
-        audit.named(); audit.fallbacks(); audit.context();
+        audit.named(); audit.fallbacks(); audit.context(); audit.loginQueries();
         System.out.println("Verified " + audit.compared + " named-codec, context, and custom-payload boundary cases against vanilla");
+    }
+    private void loginQueries() throws Exception {
+        for (boolean answer : new boolean[]{false, true}) {
+            String simple = answer ? "ServerboundCustomQueryAnswerPacket" : "ClientboundCustomQueryPacket";
+            String generatedName = "org.stackanvil.packetforge.protocol.packet.login." + simple;
+            var model = models.get(generatedName); Class<?> generatedType = Class.forName(generatedName);
+            @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) generatedType.getField("CODEC").get(null);
+            Object source = source(model); Class<?> original = loader.loadClass("net.minecraft.network.protocol.login." + simple);
+            for (byte[] data : new byte[][]{new byte[0], new byte[]{0}, new byte[]{1}, new byte[]{0, 9}, new byte[]{1, 5, -1}, new byte[]{2, 9}, new byte[1048576], new byte[1048577]}) {
+                Object value = answer ? generatedType.getConstructor(int.class, byte[].class).newInstance(-123, data)
+                    : generatedType.getConstructor(int.class, String.class, byte[].class).newInstance(-123, "packetforge:query", data);
+                byte[] bytes = body(generated, value);
+                ByteBuf input = Unpooled.wrappedBuffer(bytes);
+                try {
+                    if (data.length > 1048576) {
+                        assertThrows(IllegalArgumentException.class, () -> generated.decode(input));
+                        assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes));
+                    } else {
+                        Object parsed = generated.decode(input); assertFalse(input.isReadable());
+                        assertArrayEquals(data, (byte[]) generatedType.getMethod("data").invoke(parsed));
+                        assertArrayEquals(bytes, body(generated, parsed));
+                        Object vanilla = sourceDecode(source, bytes); assertEquals(-123, original.getMethod("transactionId").invoke(vanilla));
+                        Object canonical = answer ? generatedType.getConstructor(int.class, byte[].class).newInstance(-123, new byte[]{1})
+                            : generatedType.getConstructor(int.class, String.class, byte[].class).newInstance(-123, "packetforge:query", new byte[0]);
+                        assertArrayEquals(body(generated, canonical), sourceEncode(source, vanilla), "Vanilla discards query data, including the answer presence byte");
+                    }
+                    compared++;
+                } finally { input.release(); }
+            }
+            Class<?> payloadType = loader.loadClass("net.minecraft.network.protocol.login.custom." + (answer ? "CustomQueryAnswerPayload" : "CustomQueryPayload"));
+            Object channel = loader.loadClass("net.minecraft.resources.Identifier").getMethod("parse", String.class).invoke(null, "packetforge:query");
+            for (int length : new int[]{0, 3, 1048576, 1048577}) {
+                byte[] data = new byte[length]; if (length > 0) data[0] = 123;
+                Object payload = java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[]{payloadType}, (proxy, method, arguments) -> {
+                    if (method.getName().equals("id")) return channel;
+                    if (method.getName().equals("write")) { byteBuf.getMethod("writeBytes", byte[].class).invoke(arguments[0], (Object) data); return null; }
+                    throw new UnsupportedOperationException(method.toString());
+                });
+                Object vanilla = original.getConstructor(int.class, payloadType).newInstance(-123, payload);
+                byte[] wire = answer ? new byte[length + 1] : data;
+                if (answer) { wire[0] = 1; System.arraycopy(data, 0, wire, 1, length); }
+                Object value = answer ? generatedType.getConstructor(int.class, byte[].class).newInstance(-123, wire)
+                    : generatedType.getConstructor(int.class, String.class, byte[].class).newInstance(-123, "packetforge:query", wire);
+                assertArrayEquals(sourceEncode(source, vanilla), body(generated, value), "Query writers retain their unbounded output behavior"); compared++;
+            }
+            if (answer) {
+                Object absent = original.getConstructor(int.class, payloadType).newInstance(-123, null);
+                Object generatedAbsent = generatedType.getConstructor(int.class, byte[].class).newInstance(-123, new byte[]{0});
+                assertArrayEquals(sourceEncode(source, absent), body(generated, generatedAbsent)); compared++;
+            }
+        }
     }
     private Object input(Object raw) throws Exception { return friendly.getConstructor(byteBuf, registryAccess).newInstance(raw, registries); }
     private Object source(JsonObject model) throws Exception { return loader.loadClass(model.get("originalName").getAsString().split("#", 2)[0]).getField(model.get("sourceCodecField").getAsString()).get(null); }

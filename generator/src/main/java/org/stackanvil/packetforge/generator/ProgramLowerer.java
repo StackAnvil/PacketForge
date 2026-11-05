@@ -57,6 +57,10 @@ final class ProgramLowerer {
                 var read = readers.getFirst(); input = read.getParameter(0).getNameAsString(); decode = read.getBody().orElseThrow(() -> new Unsupported("Incomplete serialization declaration")).clone();
             }
         } else throw new Unsupported("Not an imperative stream codec");
+        return lowerBodies(decode, encode, input, output, constructorMode);
+    }
+    Lowered lowerBodies(BlockStmt decode, BlockStmt encode, String input, String output, boolean constructorMode) {
+        decode = decode.clone(); encode = encode.clone();
         if (!decode.findAll(ExplicitConstructorInvocationStmt.class).isEmpty()) {
             if (decode.getStatements().size() != 1 || !(decode.getStatement(0) instanceof ExplicitConstructorInvocationStmt invocation) || !invocation.isThis()) throw new Unsupported("Imperative constructor delegates with extra statements");
             decode = new BlockStmt().addStatement(new ReturnStmt(new ObjectCreationExpr(null, StaticJavaParser.parseClassOrInterfaceType(source.name()), new NodeList<>(invocation.getArguments().stream().map(Expression::clone).toList()))));
@@ -192,6 +196,7 @@ final class ProgramLowerer {
         if (name.equals("VecDelta")) return new MovementDeltaAnalyzer(analyzer).value();
         if (name.equals("BlockState")) return new Wire("int", "WireCodecs.VAR_INT", "REGISTRY_BLOCK_STATE");
         if (name.endsWith("[]")) { Wire component = valueType(name.substring(0, name.length() - 2)); return new Wire(component.type() + "[]", "", "program-array<" + component.shape() + ">"); }
+        if (name.equals("ChunkPos")) return new Wire("org.stackanvil.packetforge.commons.ChunkPosition", "WireCodecs.CHUNK_POSITION", "CHUNK_POSITION");
         if (name.equals("Vec3i")) return new Wire("org.stackanvil.packetforge.commons.IntVector3", "VectorCodecs.INT", "VECTOR3I");
         if (name.equals("Vec3")) return new Wire("org.stackanvil.packetforge.commons.Vector3", "VectorCodecs.DOUBLE", "VECTOR3");
         var parsed = StaticJavaParser.parseType(name);
@@ -339,7 +344,7 @@ final class ProgramLowerer {
             if (Set.of("getX", "getY", "getZ").contains(method) && original.getArguments().isEmpty() && Set.of("BlockPos", "Vec3i").contains(scopeType == null ? "" : scopeType)) {
                 call.setScope((Expression) call.getScope().orElseThrow().accept(this, null)); call.setName(method.substring(3).toLowerCase(java.util.Locale.ROOT)); return call;
             }
-            if (Set.of("x", "y", "z").contains(method) && original.getArguments().isEmpty() && scopeType != null && scopeType.equals("Vec3")) { call.setScope((Expression) call.getScope().orElseThrow().accept(this, null)); return call; }
+            if (Set.of("x", "y", "z").contains(method) && original.getArguments().isEmpty() && scopeType != null && Set.of("Vec3", "ChunkPos").contains(scopeType)) { call.setScope((Expression) call.getScope().orElseThrow().accept(this, null)); return call; }
             SourceIndex.Source target = helperOwner(scope, method);
             var candidates = target.declaration().getMethodsByName(method).stream().filter(m -> m.isStatic() && m.getParameters().size() == original.getArguments().size()).toList();
             if (candidates.size() != 1) throw new Unsupported("Ambiguous imperative helper: " + original);
@@ -396,8 +401,8 @@ final class ProgramLowerer {
                 return new ObjectCreationExpr(null, StaticJavaParser.parseClassOrInterfaceType(generatedName), arguments);
             }
             String owner = analyzer.index.resolve(creation.getType().getNameWithScope(), source);
-            if (Set.of("net.minecraft.core.BlockPos", "net.minecraft.core.Vec3i").contains(owner) && creation.getArguments().size() == 3 || owner.equals("net.minecraft.world.phys.Vec3") && creation.getArguments().size() == 3) {
-                super.visit(creation, ignored); creation.setType(owner.endsWith("BlockPos") ? "org.stackanvil.packetforge.commons.BlockPosition" : owner.endsWith("Vec3i") ? "org.stackanvil.packetforge.commons.IntVector3" : "org.stackanvil.packetforge.commons.Vector3"); return creation;
+            if (Set.of("net.minecraft.core.BlockPos", "net.minecraft.core.Vec3i").contains(owner) && creation.getArguments().size() == 3 || owner.equals("net.minecraft.world.phys.Vec3") && creation.getArguments().size() == 3 || owner.equals("net.minecraft.world.level.ChunkPos") && creation.getArguments().size() == 2) {
+                super.visit(creation, ignored); creation.setType(owner.endsWith("ChunkPos") ? "org.stackanvil.packetforge.commons.ChunkPosition" : owner.endsWith("BlockPos") ? "org.stackanvil.packetforge.commons.BlockPosition" : owner.endsWith("Vec3i") ? "org.stackanvil.packetforge.commons.IntVector3" : "org.stackanvil.packetforge.commons.Vector3"); return creation;
             }
             try {
                 Wire targetWire = analyzer.codec(new FieldAccessExpr(new NameExpr(owner), "STREAM_CODEC"), source);

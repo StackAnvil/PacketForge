@@ -17,6 +17,7 @@ import org.stackanvil.packetforge.protocol.packet.common.*;
 import org.stackanvil.packetforge.protocol.packet.configuration.ClientboundFinishConfigurationPacket;
 import org.stackanvil.packetforge.protocol.packet.game.*;
 import org.stackanvil.packetforge.protocol.packet.login.ServerboundHelloPacket;
+import org.stackanvil.packetforge.protocol.type.world.waypoints.*;
 import org.stackanvil.packetforge.protocol.packet.ping.ServerboundPingRequestPacket;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -59,6 +60,16 @@ class VanillaCompatibilityTest {
             new ClientboundSetPlayerTeamPacket((byte) 3, "team", List.of("player", "café"), java.util.Optional.empty()),
             new ClientboundSetPlayerTeamPacket((byte) 4, "team", List.of("player"), java.util.Optional.empty())
         ));
+        List<Variant<TrackedWaypoint_Type>> waypointContents = List.of(
+            new Variant<>(TrackedWaypoint_Type.EMPTY, Unit.INSTANCE),
+            new Variant<>(TrackedWaypoint_Type.VEC3I, new TrackedWaypoint_Vec3iWaypoint_Contents(new IntVector3(Integer.MIN_VALUE, -1, Integer.MAX_VALUE))),
+            new Variant<>(TrackedWaypoint_Type.CHUNK, new TrackedWaypoint_ChunkWaypoint_Contents(new ChunkPosition(-12345, 67890))),
+            new Variant<>(TrackedWaypoint_Type.AZIMUTH, new TrackedWaypoint_AzimuthWaypoint_Contents(-3.1415927f)));
+        for (var operation : ClientboundTrackedWaypointPacket_Operation.values()) for (var contents : waypointContents) for (boolean named : new boolean[]{false, true}) {
+            Either<UUID, String> id = named ? Either.right("waypoint café") : Either.left(new UUID(Long.MIN_VALUE, Long.MAX_VALUE));
+            var icon = new Waypoint_Icon("minecraft:default", named ? java.util.Optional.of(0xff123456) : java.util.Optional.empty());
+            samples.add(new ClientboundTrackedWaypointPacket(operation, new TrackedWaypoint(id, icon, contents)));
+        }
         var models = GeneratedRoundTripTest.models();
         for (var entry : GeneratedProtocol.registry().entries().values()) {
             for (int variant = 0; variant < 3; variant++) samples.add((Packet) GeneratedRoundTripTest.sample(entry.type(), "", variant, models));
@@ -136,10 +147,11 @@ class VanillaCompatibilityTest {
         for (var definition : models.entrySet()) {
             if (!definition.getKey().startsWith("$dispatch:")) continue;
             var dispatch = definition.getValue(); String name = dispatch.get("name").getAsString();
+            boolean enumConstructor = dispatch.get("originalExpression").getAsString().startsWith("enum-constructor:");
             boolean enumOperation = dispatch.get("originalExpression").getAsString().startsWith("enum-decoder:");
             boolean entityMetadata = dispatch.get("registry").getAsString().equals("ENTITY_DATA_SERIALIZERS");
             Class<?> serializerTable = entityMetadata ? loader.loadClass("net.minecraft.network.syncher.EntityDataSerializers") : null;
-            Object defaultOriginal = entityMetadata || enumOperation ? null : loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
+            Object defaultOriginal = entityMetadata || enumOperation || enumConstructor ? null : loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
             @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) GeneratedWireCodecs.class.getField(name).get(null);
             var cases = dispatch.getAsJsonArray("cases"); String registryName = dispatch.get("registry").getAsString();
             String[] registryNames = registryName.isEmpty() || entityMetadata ? new String[0] : registryName.split("\\|");
@@ -191,15 +203,20 @@ class VanillaCompatibilityTest {
                             assertEquals(key, varInt.getMethod("read", byteBuf).invoke(null, inputRaw));
                             varInt.getMethod("write", byteBuf, int.class).invoke(null, outputRaw, (Integer) key);
                         }
-                        if (enumOperation) {
+                        if (enumOperation || enumConstructor) {
                             Class<?> enumeration = loadOriginal(loader, dispatch.get("sourceOwner").getAsString());
                             Object sourceKey = java.util.Arrays.stream(enumeration.getEnumConstants()).filter(v -> ((Enum<?>) v).name().equals(keyName)).findFirst().orElseThrow();
                             Class<?> varInt = loader.loadClass("net.minecraft.network.VarInt");
                             assertEquals(((Enum<?>) sourceKey).ordinal(), varInt.getMethod("read", byteBuf).invoke(null, inputRaw));
                             var field = enumeration.getDeclaredField(dispatch.get("originalExpression").getAsString().split(":")[1]); field.setAccessible(true);
-                            Object parsed = loader.loadClass("net.minecraft.network.codec.StreamDecoder").getMethod("decode", Object.class).invoke(field.get(sourceKey), input);
+                            Object parsed;
+                            if (enumConstructor) {
+                                Object identifier = loader.loadClass("com.mojang.datafixers.util.Either").getMethod("left", Object.class).invoke(null, new UUID(0, 0));
+                                Object icon = loader.loadClass("net.minecraft.world.waypoints.Waypoint$Icon").getField("NULL").get(null);
+                                parsed = loader.loadClass("org.apache.commons.lang3.function.TriFunction").getMethod("apply", Object.class, Object.class, Object.class).invoke(field.get(sourceKey), identifier, icon, input);
+                            } else parsed = loader.loadClass("net.minecraft.network.codec.StreamDecoder").getMethod("decode", Object.class).invoke(field.get(sourceKey), input);
                             varInt.getMethod("write", byteBuf, int.class).invoke(null, outputRaw, ((Enum<?>) sourceKey).ordinal());
-                            var writer = java.util.Arrays.stream(parsed.getClass().getDeclaredMethods()).filter(m -> m.getName().equals("write") && m.getParameterCount() == 1 && !m.isBridge()).findFirst().orElseThrow(); writer.setAccessible(true); writer.invoke(parsed, output);
+                            var writer = java.util.Arrays.stream(parsed.getClass().getDeclaredMethods()).filter(m -> m.getName().equals(dispatch.get("originalExpression").getAsString().split(":")[2]) && m.getParameterCount() == 1 && !m.isBridge()).findFirst().orElseThrow(); writer.setAccessible(true); writer.invoke(parsed, output);
                         } else {
                             Object parsed = decode.invoke(originalCodec, input); encode.invoke(originalCodec, output, parsed);
                         }

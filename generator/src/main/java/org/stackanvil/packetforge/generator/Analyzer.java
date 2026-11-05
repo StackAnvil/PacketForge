@@ -203,7 +203,9 @@ final class Analyzer {
             List<Field> fields;
             Program program = null; String decodeFailure = "";
             try {
-            if (codec instanceof MethodCallExpr call && call.getScope().map(Object::toString).orElse("").equals("StreamCodec") && call.getNameAsString().equals("unit")) {
+            if (Set.of("net.minecraft.network.protocol.login.ClientboundCustomQueryPacket", "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket").contains(name)) {
+                fields = new LoginQueryAnalyzer(this).lower(codec, source);
+            } else if (codec instanceof MethodCallExpr call && call.getScope().map(Object::toString).orElse("").equals("StreamCodec") && call.getNameAsString().equals("unit")) {
                 fields = List.of();
             } else if (codec instanceof MethodCallExpr call && call.getScope().map(Object::toString).orElse("").equals("StreamCodec") && call.getNameAsString().equals("composite")) {
                 fields = composite(call, source);
@@ -231,8 +233,12 @@ final class Analyzer {
                 } else try {
                     try { fields = new EnumOperationAnalyzer(this).lower(codec, source); }
                     catch (Unsupported operationFailure) {
-                        var lowered = new ProgramLowerer(this, source, generated).lower(codec);
-                        fields = lowered.fields(); program = lowered.program();
+                        if (source.declaration() instanceof ClassOrInterfaceDeclaration clazz && clazz.isAbstract()) {
+                            fields = new PolymorphicConstructorAnalyzer(this).lower(codec, source);
+                        } else {
+                            var lowered = new ProgramLowerer(this, source, generated).lower(codec);
+                            fields = lowered.fields(); program = lowered.program();
+                        }
                     }
                 } catch (Unsupported programFailure) {
                     try { fields = new LinearWireProjection(this).lower(codec, source); }
@@ -362,6 +368,7 @@ final class Analyzer {
             if (enumeration.constants().isEmpty()) throw new Unsupported("readEnum target is not an enum");
             return new Wire(enumeration.generatedName(), "WireCodecs.enumOrdinal(" + enumeration.generatedName() + ".values())", "enum:" + enumeration.originalName());
         }
+        if (operation.equals("Either") && call.getArguments().size() == 2) return either(readerFunction(call.getArgument(0), source), readerFunction(call.getArgument(1), source));
         if (Set.of("Nullable", "Optional", "List").contains(operation) && call.getArguments().size() == 1) {
             Wire inner = readerFunction(call.getArgument(0), source);
             return container(operation.toLowerCase(Locale.ROOT), inner, "Integer.MAX_VALUE");
@@ -400,11 +407,15 @@ final class Analyzer {
         if (operation.equals("Nbt") && call.getArguments().size() == 1) return new Wire("org.stackanvil.packetforge.commons.NbtTag.Compound", "NbtCodecs.NULLABLE_COMPOUND", "NBT_COMPOUND_NULLABLE");
         if (operation.equals("Enum") && call.getArguments().size() == 1 && read.shape().startsWith("enum:")) return read;
         if (operation.equals("ByteArray") && call.getArguments().size() == 1) return new Wire("byte[]", "WireCodecs.byteArray(Integer.MAX_VALUE)", "byteArray");
+        if (operation.equals("Either") && call.getArguments().size() == 3) return either(writerFunction(call.getArgument(1), source), writerFunction(call.getArgument(2), source));
         if (Set.of("Nullable", "Optional", "Collection").contains(operation) && call.getArguments().size() == 2) {
             Wire inner = writerFunction(call.getArgument(1), source);
             return container(operation.equals("Collection") ? "list" : operation.toLowerCase(Locale.ROOT), inner, "Integer.MAX_VALUE");
         }
         throw new Unsupported("Unsupported buffer write: " + shortText(call));
+    }
+    private Wire either(Wire left, Wire right) {
+        return new Wire("org.stackanvil.packetforge.commons.Either<" + boxed(left.type()) + ", " + boxed(right.type()) + ">", "WireCodecs.either(" + left.codec() + ", " + right.codec() + ")", "either<" + left.shape() + "," + right.shape() + ">");
     }
     private Wire enumIdMapper(MethodCallExpr call, SourceIndex.Source source) {
         String idField = enumIdField(call.getArgument(1), source);

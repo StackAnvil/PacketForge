@@ -209,7 +209,9 @@ class GeneratedRoundTripTest {
                 boolean nonempty = original.equals("net.minecraft.world.level.pathfinder.Path.DebugData") && components[i].getName().equals("targetNodes")
                         || original.equals("net.minecraft.world.entity.PositionPath.Stepped") && components[i].getName().equals("steps");
                 int fieldVariant = original.equals("net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket") && components[i].getName().equals("parameters") ? variant == 1 ? 0 : variant + 1 : original.equals("net.minecraft.world.entity.npc.villager.VillagerData") && components[i].getName().equals("level") ? variant + 1 : original.equals("net.minecraft.world.level.block.entity.SignText") && components[i].getName().equals("filteredMessagesForSerialization") && variant != 0 ? variant + 1 : original.equals("net.minecraft.world.item.enchantment.Enchantable") ? variant + 1 : original.startsWith("net.minecraft.core.particles.") && components[i].getName().equals("scale") ? variant + 1 : nonempty ? Math.max(1, variant) : variant;
-                values[i] = original.equals("net.minecraft.world.item.trading.MerchantOffer") && components[i].getName().equals("maxUses") ? 100
+                values[i] = original.equals("net.minecraft.network.protocol.login.ClientboundCustomQueryPacket") && components[i].getName().equals("data") ? new byte[0]
+                        : original.equals("net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket") && components[i].getName().equals("data") ? new byte[]{1}
+                        : original.equals("net.minecraft.world.item.trading.MerchantOffer") && components[i].getName().equals("maxUses") ? 100
                         : original.equals("net.minecraft.world.item.trading.MerchantOffer") && components[i].getName().equals("uses") ? variant == 2 ? 100 : variant
                         : original.equals("net.minecraft.world.item.trading.MerchantOffer") && components[i].getName().equals("isExhausted") ? variant == 2
                         : original.equals("net.minecraft.world.item.trading.ItemCost") && components[i].getName().equals("item") ? 1
