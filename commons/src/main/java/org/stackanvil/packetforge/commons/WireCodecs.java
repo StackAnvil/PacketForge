@@ -1,9 +1,6 @@
 package org.stackanvil.packetforge.commons;
 
 import io.netty.buffer.ByteBuf;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -52,6 +49,27 @@ public final class WireCodecs {
                 if (codec == null) throw new IllegalArgumentException("Unknown codec discriminator: " + value.type());
                 key.encode(b, value.type()); codec.encode(b, value.value());
             });
+    }
+    public static <K> PacketCodec<Variant<K>> dispatchWithFallback(PacketCodec<K> key, Map<K, PacketCodec<?>> cases, PacketCodec<byte[]> fallback) {
+        Map<K, PacketCodec<?>> table = Map.copyOf(cases);
+        return of(input -> { K id = key.decode(input); PacketCodec<?> codec = table.get(id); return new Variant<>(id, codec == null ? fallback.decode(input) : codec.decode(input)); }, (output, value) -> {
+            key.encode(output, value.type());
+            @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) table.get(value.type());
+            if (codec == null) fallback.encode(output, (byte[]) value.value()); else codec.encode(output, value.value());
+        });
+    }
+    public static PacketCodec<byte[]> remainingBytes(int maximum) {
+        if (maximum < 0) throw new IllegalArgumentException("Negative remaining-byte limit");
+        return of(input -> { int count = checkedLength(input.readableBytes(), maximum); byte[] value = new byte[count]; input.readBytes(value); return value; }, (output, value) -> { checkedLength(value.length, maximum); output.writeBytes(value); });
+    }
+    public static <T> PacketCodec<T> selected(java.util.function.BooleanSupplier selector, PacketCodec<T> enabled, PacketCodec<T> disabled) {
+        return of(input -> (selector.getAsBoolean() ? enabled : disabled).decode(input), (output, value) -> (selector.getAsBoolean() ? enabled : disabled).encode(output, value));
+    }
+    public static <T> PacketCodec<T> skipDecodeFailures(PacketCodec<T> codec) {
+        return of(input -> { try { return codec.decode(input); } catch (WireDecodeException failure) { throw new SkippedPacketException(failure); } }, codec::encode);
+    }
+    public static <T> PacketCodec<T> gated(java.util.function.BooleanSupplier allowed, PacketCodec<T> codec, String rejection) {
+        return of(input -> { if (!allowed.getAsBoolean()) throw new SkippedPacketException(rejection); return codec.decode(input); }, (output, value) -> { if (!allowed.getAsBoolean()) throw new SkippedPacketException(rejection); codec.encode(output, value); });
     }
     public static final PacketCodec<HolderSet> HOLDER_SET = of(input -> {
         int count = WireCodecs.VAR_INT.decode(input);
@@ -185,13 +203,12 @@ public final class WireCodecs {
     public static PacketCodec<String> string(int maxChars) {
         if (maxChars < 0 || maxChars > Integer.MAX_VALUE / 3) throw new IllegalArgumentException("Invalid string limit");
         return of(b -> {
-            int size = checkedLength(VAR_INT.decode(b), Math.min(maxChars * 3, b.readableBytes()));
+            int size = VAR_INT.decode(b);
+            if (size < 0 || size > Math.min(maxChars * 3, b.readableBytes())) throw new WireDecodeException("Invalid string byte length: " + size);
             byte[] data = new byte[size]; b.readBytes(data);
-            try {
-                String value = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(data)).toString();
-                if (value.length() > maxChars) throw new IllegalArgumentException("String exceeds character limit");
-                return value;
-            } catch (CharacterCodingException e) { throw new IllegalArgumentException("Invalid UTF-8", e); }
+            String value = new String(data, StandardCharsets.UTF_8);
+            if (value.length() > maxChars) throw new WireDecodeException("String exceeds character limit");
+            return value;
         }, (b, value) -> {
             if (value.length() > maxChars) throw new IllegalArgumentException("String exceeds character limit");
             byte[] data = value.getBytes(StandardCharsets.UTF_8);

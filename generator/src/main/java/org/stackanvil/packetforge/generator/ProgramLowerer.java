@@ -24,7 +24,9 @@ final class ProgramLowerer {
     private final Map<String, String> helperCode = new LinkedHashMap<>();
     private final Map<String, String> localTypes = new HashMap<>();
     private String valueName = "value";
-    ProgramLowerer(Analyzer analyzer, SourceIndex.Source source) { this.analyzer = analyzer; this.source = source; }
+    private final String generatedName;
+    ProgramLowerer(Analyzer analyzer, SourceIndex.Source source) { this(analyzer, source, analyzer.index.generated(source.name())); }
+    ProgramLowerer(Analyzer analyzer, SourceIndex.Source source, String generatedName) { this.analyzer = analyzer; this.source = source; this.generatedName = generatedName; }
 
     Lowered lower(Expression codec) {
         BlockStmt decode, encode;
@@ -82,7 +84,7 @@ final class ProgramLowerer {
         StringBuilder body = new StringBuilder();
         if (constructorMode) for (var field : layout) body.append(field.read().type()).append(" ").append(local(field.name())).append(" = ").append(defaultValue(field.read().type())).append(";\n");
         body.append(contents(decode));
-        if (constructorMode) body.append("\nreturn new ").append(simple(analyzer.index.generated(source.name()))).append("(").append(String.join(", ", fields.keySet().stream().map(ProgramLowerer::local).toList())).append(");");
+        if (constructorMode) body.append("\nreturn new ").append(simple(generatedName)).append("(").append(String.join(", ", fields.keySet().stream().map(ProgramLowerer::local).toList())).append(");");
         return new Lowered(layout, new Program(body.toString(), contents(encode), List.copyOf(reads), List.copyOf(helperCode.values())));
     }
     private void collectTypes(SourceIndex.Source target, Set<String> visited) {
@@ -307,7 +309,7 @@ final class ProgramLowerer {
                     Expression value = values.get(field); if (value == null) throw new Unsupported("Constructor does not initialize " + field);
                     arguments.add((Expression) value.accept(this, null));
                 }
-                return new ObjectCreationExpr(null, StaticJavaParser.parseClassOrInterfaceType(analyzer.index.generated(source.name())), arguments);
+                return new ObjectCreationExpr(null, StaticJavaParser.parseClassOrInterfaceType(generatedName), arguments);
             }
             String owner = analyzer.index.resolve(creation.getType().getNameWithScope(), source);
             if (Set.of("net.minecraft.core.BlockPos", "net.minecraft.core.Vec3i").contains(owner) && creation.getArguments().size() == 3 || owner.equals("net.minecraft.world.phys.Vec3") && creation.getArguments().size() == 3) {

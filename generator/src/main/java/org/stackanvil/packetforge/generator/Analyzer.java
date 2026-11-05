@@ -19,20 +19,26 @@ final class Analyzer {
     record DispatchCase(String key, Wire value, String name) {
         DispatchCase(String key, Wire value) { this(key, value, key); }
     }
-    record Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation, String registry, String sourceCodecField) {
+    record Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation, String registry, String sourceCodecField, Wire fallback) {
+        Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation, String registry, String sourceCodecField) { this(name, key, cases, sourceOwner, originalExpression, implementation, registry, sourceCodecField, null); }
         Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation, String registry) { this(name, key, cases, sourceOwner, originalExpression, implementation, registry, "STREAM_CODEC"); }
         Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation) { this(name, key, cases, sourceOwner, originalExpression, implementation, ""); }
     }
     record RegistryGap(int id, String name, String reason) {}
     record Field(String name, String originalType, Wire read, Wire write) {}
     record Program(String decode, String encode, List<String> operations, List<String> helpers) {}
-    record Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet, List<String> validations, Program program, String factory) {
+    record Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet, List<String> validations, Program program, String factory, String sourceCodecField, String decodeFailure) {
+        Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet, List<String> validations, Program program, String factory, String sourceCodecField) { this(originalName, generatedName, fields, constants, packet, validations, program, factory, sourceCodecField, ""); }
+        Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet, List<String> validations, Program program, String factory) { this(originalName, generatedName, fields, constants, packet, validations, program, factory, "STREAM_CODEC"); }
         Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet, List<String> validations, Program program) { this(originalName, generatedName, fields, constants, packet, validations, program, ""); }
         Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet) { this(originalName, generatedName, fields, constants, packet, List.of(), null); }
         Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet, List<String> validations) { this(originalName, generatedName, fields, constants, packet, validations, null); }
     }
+    record ContextRule(String predicate, String allowedModel, String fallbackModel, String rejection) {}
     record Registration(String state, String flow, int id, String name, String originalClass, String codecExpression,
-                        String source, int line, boolean supported, String reason, String generatedClass) {}
+                        String source, int line, boolean supported, String reason, String generatedClass, ContextRule contextRule) {
+        Registration(String state, String flow, int id, String name, String originalClass, String codecExpression, String source, int line, boolean supported, String reason, String generatedClass) { this(state, flow, id, name, originalClass, codecExpression, source, line, supported, reason, generatedClass, null); }
+    }
     private record Decoded(String name, Expression value) {}
     private static final Map<String, String> SCALARS = Map.ofEntries(
         Map.entry("Boolean", "BOOL:boolean"), Map.entry("Byte", "BYTE:byte"), Map.entry("UnsignedByte", "UNSIGNED_BYTE:int"),
@@ -52,6 +58,7 @@ final class Analyzer {
     final Map<String, Dispatch> dispatches = new TreeMap<>();
     final Set<String> activeDispatches = new HashSet<>();
     final Map<String, List<RegistryGap>> registryGaps = new TreeMap<>();
+    final Map<String, String> codecVariants = new HashMap<>();
     private final Map<String, Wire> bindings = new HashMap<>();
     NameExpr bind(Wire wire) { String name = "$wire_" + bindings.size(); bindings.put(name, wire); return new NameExpr(name); }
     private final Map<String, String> failures = new HashMap<>();
@@ -89,20 +96,20 @@ final class Analyzer {
                             continue;
                         }
                         if (!registration.getNameAsString().equals("addPacket")) throw new Unsupported("Unknown registration operation: " + registration.getNameAsString());
+                        if (registration.getArguments().size() < 2 || registration.getArguments().size() > 3) throw new Unsupported("Unknown packet registration arity");
                         String key = registration.getArgument(0).toString();
                         Expression codec = registration.getArgument(1);
                         if (!(codec instanceof FieldAccessExpr access)) throw new Unsupported("Registration codec is not a field: " + codec);
                         String className = index.resolve(access.getScope().toString(), source);
                         String packetName = packetName(key, source);
-                        String reason = ""; Model model = null;
+                        String reason = ""; Model model = null; ContextRule contextRule = null;
                         try {
-                            if (registration.getArguments().size() != 2) throw new Unsupported("Context-dependent codec modifier");
-                            if (!access.getNameAsString().equals("STREAM_CODEC")) throw new Unsupported("Non-default packet codec: " + codec);
-                            model = model(className);
+                            model = model(className, access.getNameAsString());
                             if (!model.packet()) throw new Unsupported("Registered type does not directly implement Packet");
+                            if (registration.getArguments().size() == 3) contextRule = new ContextModifierAnalyzer(this).lower(registration.getArgument(2), source, model);
                         } catch (Unsupported e) { reason = e.getMessage(); }
                         registrations.add(new Registration(state.getNameAsString(), flow, id++, packetName, className, codec.toString(), fqn,
-                            registration.getBegin().orElseThrow().line, reason.isEmpty(), reason, reason.isEmpty() ? model.generatedName() : ""));
+                            registration.getBegin().orElseThrow().line, reason.isEmpty(), reason, reason.isEmpty() ? model.generatedName() : "", reason.isEmpty() ? contextRule : null));
                     }
                 }
             }
@@ -112,7 +119,8 @@ final class Analyzer {
         for (var registration : registrations) if (!keys.add(registration.state() + ":" + registration.flow() + ":" + registration.id())) throw new Unsupported("Duplicate protocol registration");
         List<Registration> checked = new ArrayList<>();
         for (var entry : registrations) {
-            String missing = entry.supported() ? missingSchema(models.get(entry.originalClass()), new HashSet<>()) : "";
+            String missing = entry.supported() ? missingSchema(models.values().stream().filter(m -> m.generatedName().equals(entry.generatedClass())).findFirst().orElseThrow(), new HashSet<>()) : "";
+            if (missing.isEmpty() && entry.supported() && entry.contextRule() != null && !entry.contextRule().fallbackModel().isEmpty()) missing = missingSchema(models.get(entry.contextRule().fallbackModel()), new HashSet<>());
             checked.add(missing.isEmpty() ? entry : new Registration(entry.state(), entry.flow(), entry.id(), entry.name(), entry.originalClass(), entry.codecExpression(), entry.source(), entry.line(), false, missing, ""));
         }
         return List.copyOf(checked);
@@ -169,29 +177,37 @@ final class Analyzer {
         }
         return false;
     }
-    Model model(String name) {
-        if (models.containsKey(name)) return models.get(name);
-        if (failures.containsKey(name)) throw new Unsupported(failures.get(name));
-        if (!active.add(name)) throw new Unsupported("Recursive codec dependency: " + name);
+    Model model(String name) { return model(name, "STREAM_CODEC"); }
+    Model model(String name, String codecField) {
+        String key = codecField.equals("STREAM_CODEC") ? name : name + "#" + codecField;
+        String generated = index.generated(name) + (codecField.equals("STREAM_CODEC") ? "" : "_" + codecField);
+        String previousVariant = codecVariants.put(name, key);
+        try { return lowerModel(name, codecField, key, generated); }
+        finally { if (previousVariant == null) codecVariants.remove(name); else codecVariants.put(name, previousVariant); }
+    }
+    private Model lowerModel(String name, String codecField, String key, String generated) {
+        if (models.containsKey(key)) return models.get(key);
+        if (failures.containsKey(key)) throw new Unsupported(failures.get(key));
+        if (!active.add(key)) throw new Unsupported("Recursive codec dependency: " + name);
         try {
             var source = index.source(name);
             var declaration = source.declaration();
             if (declaration instanceof EnumDeclaration enumeration) {
                 Model model = new Model(name, index.generated(name), List.of(), enumeration.getEntries().stream().map(EnumConstantDeclaration::getNameAsString).toList(), false);
                 if (model.constants().isEmpty()) throw new Unsupported("Empty enum: " + name);
-                models.put(name, model); return model;
+                models.put(key, model); return model;
             }
             boolean packet = isPacket(source, new HashSet<>());
-            Expression codec = declaration.getFieldByName("STREAM_CODEC").map(f -> f.getVariable(0).getInitializer().orElseThrow())
-                .orElseGet(() -> StaticJavaParser.parseExpression("Packet.codec(" + declaration.getNameAsString() + "::write, " + declaration.getNameAsString() + "::new)"));
+            Expression codec = declaration.getFieldByName(codecField).map(f -> f.getVariable(0).getInitializer().orElseThrow())
+                .orElseGet(() -> { if (!codecField.equals("STREAM_CODEC")) throw new Unsupported("Missing named codec field: " + name + "." + codecField); return StaticJavaParser.parseExpression("Packet.codec(" + declaration.getNameAsString() + "::write, " + declaration.getNameAsString() + "::new)"); });
             List<Field> fields;
-            Program program = null;
+            Program program = null; String decodeFailure = "";
             try {
             if (codec instanceof MethodCallExpr call && call.getScope().map(Object::toString).orElse("").equals("StreamCodec") && call.getNameAsString().equals("unit")) {
                 fields = List.of();
             } else if (codec instanceof MethodCallExpr call && call.getScope().map(Object::toString).orElse("").equals("StreamCodec") && call.getNameAsString().equals("composite")) {
                 fields = composite(call, source);
-            } else if (codec instanceof MethodCallExpr call && Set.of("Packet", "StreamCodec").contains(call.getScope().map(Object::toString).orElse("")) && Set.of("codec", "ofMember").contains(call.getNameAsString())) {
+            } else if (codec instanceof MethodCallExpr call && Set.of("Packet", "StreamCodec", "CustomPacketPayload").contains(call.getScope().map(Object::toString).orElse("")) && Set.of("codec", "ofMember").contains(call.getNameAsString())) {
                 fields = memberCodec(call, source);
             } else if (codec instanceof MethodCallExpr call && call.getNameAsString().equals("map") && call.getArguments().size() == 2 && call.getArgument(0) instanceof MethodReferenceExpr constructor && constructor.getIdentifier().equals("new") && index.resolve(constructor.getScope().toString(), source).equals(name)) {
                 String field = getterField(call.getArgument(1), source);
@@ -201,13 +217,19 @@ final class Analyzer {
                 Wire underlying = codec(codec, source);
                 if (underlying.shape().startsWith("model:")) fields = models.get(underlying.shape().substring(6)).fields();
                 else throw new Unsupported("Codec alias does not construct this value");
+            } else if (codec instanceof ObjectCreationExpr anonymous && anonymous.getAnonymousClassBody().isPresent()) {
+                var lowered = new DelegatingCodecAnalyzer(this).lower(anonymous, source); fields = lowered.fields(); decodeFailure = lowered.decodeFailure();
+            } else if (codec instanceof MethodCallExpr factory && factory.getScope().isEmpty()) {
+                Wire underlying = new StaticCodecResolver(this).factory(factory.clone().setScope(new NameExpr(source.declaration().getNameAsString())), source);
+                if (!underlying.shape().startsWith("model:")) throw new Unsupported("Codec factory does not construct its declared model");
+                fields = models.get(underlying.shape().substring(6)).fields();
             } else { throw new Unsupported("Unsupported codec declaration: " + shortText(codec)); }
             } catch (Unsupported original) {
                 if (codec instanceof MethodCallExpr composite && composite.getScope().map(Object::toString).orElse("").equals("StreamCodec") && composite.getNameAsString().equals("composite")) {
                     Wire projection = compositeWire(composite, source);
                     fields = models.get(projection.shape().substring("model:".length())).fields();
                 } else try {
-                    var lowered = new ProgramLowerer(this, source).lower(codec);
+                    var lowered = new ProgramLowerer(this, source, generated).lower(codec);
                     fields = lowered.fields(); program = lowered.program();
                 } catch (Unsupported programFailure) {
                     if (!programFailure.getMessage().equals("Not an imperative stream codec")) throw new Unsupported(original.getMessage() + "; imperative: " + programFailure.getMessage());
@@ -215,10 +237,10 @@ final class Analyzer {
                 }
             }
             List<String> guards = new ArrayList<>(validations.getOrDefault(name, List.of())); guards.addAll(recordGuards(source, fields));
-            Model model = new Model(name, index.generated(name), fields, List.of(), packet, List.copyOf(guards), program);
-            models.put(name, model); return model;
-        } catch (Unsupported e) { failures.put(name, e.getMessage()); throw e; }
-        finally { active.remove(name); }
+            Model model = new Model(key, generated, fields, List.of(), packet, List.copyOf(guards), program, "", codecField, decodeFailure);
+            models.put(key, model); return model;
+        } catch (Unsupported e) { failures.put(key, e.getMessage()); throw e; }
+        finally { active.remove(key); }
     }
     private List<Field> composite(MethodCallExpr call, SourceIndex.Source source) {
         var args = call.getArguments();
@@ -605,6 +627,7 @@ final class Analyzer {
         if (expression instanceof MethodCallExpr call && call.getScope().isPresent()) {
             String owner = call.getScope().get().toString();
             String method = call.getNameAsString();
+            if (owner.equals("CustomPacketPayload") && method.equals("codec") && call.getArguments().size() == 2 && call.getArgument(0) instanceof LambdaExpr) return new CustomPayloadAnalyzer(this).lower(call, source);
             if (owner.equals("ByteBufCodecs")) {
                 if (Set.of("fromCodec", "fromCodecTrusted", "fromCodecWithRegistries", "fromCodecWithRegistriesTrusted").contains(method) && !call.getArguments().isEmpty()) return new Wire("org.stackanvil.packetforge.commons.NbtTag", method.contains("Trusted") ? "NbtCodecs.TRUSTED_TAG" : "NbtCodecs.TAG", "NBT:" + source.name() + "#" + call.getArgument(0));
                 if (method.equals("optionalTagCodec") && call.getArguments().size() == 1) {
@@ -641,6 +664,13 @@ final class Analyzer {
                 Wire reference = new Wire(generated, "WireCodecs.lazy(() -> " + generated + ".CODEC)", "model:" + source.name());
                 return codec(substitute(statement.getExpression(), Map.of(lambda.getParameter(0).getNameAsString(), bind(reference))), source);
             }
+            if (owner.equals("ItemStack") && method.equals("validatedStreamCodec") && call.getArguments().size() == 1) {
+                Wire inner = codec(call.getArgument(0), source); var item = index.source(index.resolve(owner, source));
+                var mapCodec = item.declaration().getFieldByName("MAP_CODEC").flatMap(f -> f.getVariable(0).getInitializer()).orElseThrow();
+                var bounds = mapCodec.findAll(MethodCallExpr.class).stream().filter(c -> c.getNameAsString().equals("intRange") && c.getArguments().size() == 2 && c.getParentNode().orElse(null) instanceof MethodCallExpr parent && parent.getNameAsString().equals("optionalAlwaysPresentFieldOf") && parent.getArguments().size() == 3 && parent.getArgument(1).toString().equals("\"count\"")).toList();
+                if (bounds.size() != 1) throw new Unsupported("Item validation has no unambiguous count range");
+                return new Wire(inner.type(), "ComponentCodecs.validatedCount(" + inner.codec() + ", " + integer(bounds.getFirst().getArgument(0), item) + ", " + integer(bounds.getFirst().getArgument(1), item) + ")", inner.shape(), item.name() + "#validatedStreamCodec:CODEC");
+            }
             if (owner.equals("StreamCodec") && method.equals("unit") && call.getArguments().size() == 1) return new Wire("org.stackanvil.packetforge.commons.Unit", "WireCodecs.UNIT", "UNIT");
             if (method.equals("dispatch") && call.getArguments().size() == 2) return new DispatchAnalyzer(this).lower(call, source);
             if (owner.equals("StreamCodec") && method.equals("composite")) return compositeWire(call, source);
@@ -654,10 +684,12 @@ final class Analyzer {
                 if (call.getArgument(0) instanceof MethodReferenceExpr factory && factory.getIdentifier().equals("new")) try {
                     String targetName = index.resolve(factory.getScope().toString(), source);
                     var target = index.source(targetName); String field = getterField(call.getArgument(1), target);
-                    Model projected = new Model(targetName, index.generated(targetName), List.of(new Field(field, declaredType(field, target), inner, inner)), List.of(), false, List.of(), null, factory.toString());
-                    Model existing = models.get(targetName);
+                    String targetKey = codecVariants.getOrDefault(targetName, targetName);
+                    String targetGenerated = index.generated(targetName) + (targetKey.equals(targetName) ? "" : "_" + targetKey.substring(targetName.length() + 1));
+                    Model projected = new Model(targetKey, targetGenerated, List.of(new Field(field, declaredType(field, target), inner, inner)), List.of(), false, List.of(), null, factory.toString());
+                    Model existing = models.get(targetKey);
                     if (existing != null && !existing.fields().equals(projected.fields())) throw new Unsupported("Conflicting mapped wire projections for " + targetName);
-                    models.putIfAbsent(targetName, projected); return modelWire(models.get(targetName));
+                    models.putIfAbsent(targetKey, projected); return modelWire(models.get(targetKey));
                 } catch (Unsupported domainProjection) { }
                 // StreamCodec.map changes the domain representation, not the bytes of its base codec.
                 return new Wire(inner.type(), inner.codec(), inner.shape(), source.name() + "#map(" + decode + ", " + encode + ")");
@@ -723,7 +755,8 @@ final class Analyzer {
         String generated;
         try { generated = index.generated(owner); }
         catch (Unsupported missingExternal) { generated = "org.stackanvil.packetforge.protocol.type.external." + owner; }
-        String modelKey = owner;
+        String modelKey = codecVariants.getOrDefault(owner, owner);
+        if (!modelKey.equals(owner)) generated += "_" + modelKey.substring(owner.length() + 1);
         try {
             var declaration = index.source(owner).declaration();
             boolean generic = declaration instanceof ClassOrInterfaceDeclaration c && !c.getTypeParameters().isEmpty() || declaration instanceof RecordDeclaration r && !r.getTypeParameters().isEmpty();
@@ -759,7 +792,7 @@ final class Analyzer {
         }
         return List.copyOf(guards);
     }
-    private String integer(Expression expression, SourceIndex.Source source) {
+    String integer(Expression expression, SourceIndex.Source source) {
         if (expression instanceof EnclosedExpr enclosed) return integer(enclosed.getInner(), source);
         if (expression instanceof BinaryExpr binary) {
             int left = Integer.parseInt(integer(binary.getLeft(), source)), right = Integer.parseInt(integer(binary.getRight(), source));

@@ -80,11 +80,12 @@ class VanillaCompatibilityTest {
             Method decode = streamCodec.getMethod("decode", Object.class);
             Method encode = streamCodec.getMethod("encode", Object.class, Object.class);
             for (Packet packet : samples) {
-                String original = models.get(packet.getClass().getName()).get("originalName").getAsString();
+                var metadata = models.get(packet.getClass().getName());
+                String original = metadata.get("originalName").getAsString().split("#", 2)[0];
                 Class<?> vanilla = loadOriginal(loader, original);
                 Object codec = loader.loadClass("net.minecraft.network.protocol.BundleDelimiterPacket").isAssignableFrom(vanilla)
                     ? streamCodec.getMethod("unit", Object.class).invoke(null, vanilla.getConstructor().newInstance())
-                    : vanilla.getField("STREAM_CODEC").get(null);
+                    : vanilla.getField(metadata.get("sourceCodecField").getAsString()).get(null);
                 byte[] expected = body(packet);
                 Object inputRaw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) expected);
                 Object outputRaw = unpooled.getMethod("buffer").invoke(null);
@@ -105,6 +106,7 @@ class VanillaCompatibilityTest {
             auditDispatches(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
             auditComponentPatches(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
             auditRelatedValues(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
+            VanillaVariantAudit.run(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
         }
     }
     @Test void registryKeepsTheCompleteCatalogueAndBundleOffset() {
@@ -272,7 +274,7 @@ class VanillaCompatibilityTest {
         @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) packet.getField("CODEC").get(null);
         assertSameWireValues(codec, expected, actual, name);
     }
-    private static void assertSameWireValues(PacketCodec<Object> codec, byte[] expected, byte[] actual, String name) throws Exception {
+    static void assertSameWireValues(PacketCodec<Object> codec, byte[] expected, byte[] actual, String name) throws Exception {
         ByteBuf left = Unpooled.wrappedBuffer(expected), right = Unpooled.wrappedBuffer(actual);
         try {
             Object before = codec.decode(left), after = codec.decode(right);

@@ -38,6 +38,13 @@ public final class ComponentCodecs {
         if (value < 0 || value > maximum) throw new IllegalArgumentException("Invalid component count or ID: " + value);
         return value;
     }
+    public static PacketCodec<ItemStack> validatedCount(PacketCodec<ItemStack> codec, int minimum, int maximum) {
+        return WireCodecs.of(input -> {
+            ItemStack value = codec.decode(input);
+            if (value.count() != 0 && (value.count() < minimum || value.count() > maximum)) throw new IllegalArgumentException("Item count is outside its persistent range");
+            return value;
+        }, codec::encode);
+    }
     public static PacketCodec<ItemStack> itemStack(PacketCodec<ComponentPatch> patch, boolean allowEmpty) {
         return WireCodecs.of(input -> {
             int count = WireCodecs.VAR_INT.decode(input);

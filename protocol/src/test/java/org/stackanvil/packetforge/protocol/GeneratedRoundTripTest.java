@@ -83,6 +83,7 @@ class GeneratedRoundTripTest {
             return name.startsWith("left:") ? Either.left(id) : Either.right(id);
         }
         Class<?> clazz = (Class<?>) type;
+        if (clazz == String.class) return name;
         return clazz.isEnum() ? java.util.Arrays.stream(clazz.getEnumConstants()).filter(v -> ((Enum<?>) v).name().equals(name)).findFirst().orElseThrow() : Integer.parseInt(name);
     }
     private static final class Keys {
