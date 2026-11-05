@@ -28,7 +28,7 @@ public final class Main {
         if (output.startsWith(input.sources()) || input.sources().startsWith(output) || cache.startsWith(output) || output.equals(Path.of("").toAbsolutePath().normalize())) throw new IllegalArgumentException("Output must be separate from sources, cache, and working directory");
         Analyzer analyzer = new Analyzer(input.sources());
         var registrations = analyzer.analyze();
-        var report = new Emitter().emit(output, input.provenance(), input.protocol(), registrations, analyzer.models, java.util.List.copyOf(analyzer.dispatches.values()));
+        var report = new Emitter().emit(output, input.provenance(), input.protocol(), registrations, analyzer.models, java.util.List.copyOf(analyzer.dispatches.values()), analyzer.registryGaps);
         if (strict && report.generatedRegistrations() != report.totalRegistrations()) throw new IllegalStateException("Unsupported packet codecs remain. Read resources/packetforge/protocol.json in " + output);
     }
 }

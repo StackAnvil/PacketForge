@@ -98,6 +98,7 @@ class VanillaCompatibilityTest {
                     byteBuf.getMethod("release").invoke(inputRaw); byteBuf.getMethod("release").invoke(outputRaw);
                 }
             }
+            auditDispatches(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
         }
     }
     @Test void registryKeepsTheCompleteCatalogueAndBundleOffset() {
@@ -112,8 +113,63 @@ class VanillaCompatibilityTest {
             if (!descriptor.supported()) assertFalse(descriptor.reason().isBlank());
         }
     }
+    private static void auditDispatches(ClassLoader loader, java.util.Map<String, com.google.gson.JsonObject> models, Object registries,
+            Class<?> byteBuf, Class<?> unpooled, Class<?> friendly, Class<?> registryAccess, Method decode, Method encode) throws Exception {
+        Class<?> registryType = loader.loadClass("net.minecraft.core.Registry");
+        int compared = 0;
+        for (var definition : models.entrySet()) {
+            if (!definition.getKey().startsWith("$dispatch:")) continue;
+            var dispatch = definition.getValue(); String name = dispatch.get("name").getAsString();
+            Object original = loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField("STREAM_CODEC").get(null);
+            @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) GeneratedWireCodecs.class.getField(name).get(null);
+            var cases = dispatch.getAsJsonArray("cases"); String registryName = dispatch.get("registry").getAsString();
+            Object registry = registryName.isEmpty() ? null : loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField(registryName).get(null);
+            if (registry != null) assertEquals(cases.size(), registryType.getMethod("size").invoke(registry), registryName + " table size");
+            Class<?> keyType = (Class<?>) GeneratedRoundTripTest.type(dispatch.getAsJsonObject("key").get("type").getAsString());
+            for (var entry : cases) {
+                var branch = entry.getAsJsonObject(); String keyName = branch.get("key").getAsString();
+                Object key = keyType.isEnum() ? java.util.Arrays.stream(keyType.getEnumConstants()).filter(v -> ((Enum<?>) v).name().equals(keyName)).findFirst().orElseThrow() : Integer.parseInt(keyName);
+                if (registry != null) {
+                    Object value = registryType.getMethod("byId", int.class).invoke(registry, Integer.parseInt(keyName));
+                    assertEquals(branch.get("name").getAsString(), registryType.getMethod("getKey", Object.class).invoke(registry, value).toString(), registryName + " ID " + keyName);
+                }
+                var schema = branch.getAsJsonObject("value");
+                if (schema.get("shape").getAsString().startsWith("REJECTED:")) {
+                    ByteBuf keyBytes = Unpooled.buffer();
+                    try {
+                        WireCodecs.VAR_INT.encode(keyBytes, (Integer) key);
+                        byte[] bytes = new byte[keyBytes.readableBytes()]; keyBytes.getBytes(0, bytes);
+                        assertThrows(IllegalArgumentException.class, () -> generated.decode(keyBytes));
+                        Object raw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) bytes);
+                        try { Object input = friendly.getConstructor(byteBuf, registryAccess).newInstance(raw, registries); assertThrows(java.lang.reflect.InvocationTargetException.class, () -> decode.invoke(original, input)); }
+                        finally { byteBuf.getMethod("release").invoke(raw); }
+                    } finally { keyBytes.release(); }
+                    continue;
+                }
+                for (int variant = 0; variant < 3; variant++) {
+                    Object value = GeneratedRoundTripTest.sample(GeneratedRoundTripTest.type(schema.get("type").getAsString()), schema.get("shape").getAsString(), variant, models);
+                    ByteBuf buffer = Unpooled.buffer(); byte[] expected;
+                    try { generated.encode(buffer, new Variant<>(key, value)); expected = new byte[buffer.readableBytes()]; buffer.readBytes(expected); }
+                    finally { buffer.release(); }
+                    Object inputRaw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) expected), outputRaw = unpooled.getMethod("buffer").invoke(null);
+                    try {
+                        Object input = friendly.getConstructor(byteBuf, registryAccess).newInstance(inputRaw, registries), output = friendly.getConstructor(byteBuf, registryAccess).newInstance(outputRaw, registries);
+                        Object parsed = decode.invoke(original, input); assertEquals(0, byteBuf.getMethod("readableBytes").invoke(inputRaw)); encode.invoke(original, output, parsed);
+                        byte[] actual = new byte[(int) byteBuf.getMethod("readableBytes").invoke(outputRaw)]; byteBuf.getMethod("readBytes", byte[].class).invoke(outputRaw, (Object) actual);
+                        if (!java.util.Arrays.equals(expected, actual)) assertSameWireValues(generated, expected, actual, name + " / " + branch.get("name"));
+                        compared++;
+                    } catch (Exception failure) { throw new AssertionError(name + " / " + branch.get("name") + " / variant " + variant, failure); }
+                    finally { byteBuf.getMethod("release").invoke(inputRaw); byteBuf.getMethod("release").invoke(outputRaw); }
+                }
+            }
+        }
+        System.out.println("Verified " + compared + " dispatch payloads and every recovered registry ID against vanilla");
+    }
     private static void assertSameWireValues(Class<?> packet, byte[] expected, byte[] actual, String name) throws Exception {
         @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) packet.getField("CODEC").get(null);
+        assertSameWireValues(codec, expected, actual, name);
+    }
+    private static void assertSameWireValues(PacketCodec<Object> codec, byte[] expected, byte[] actual, String name) throws Exception {
         ByteBuf left = Unpooled.wrappedBuffer(expected), right = Unpooled.wrappedBuffer(actual);
         try {
             assertTrue(sameValue(codec.decode(left), codec.decode(right)), name + " changed decoded wire values");

@@ -13,13 +13,17 @@ final class DispatchAnalyzer {
     DispatchAnalyzer(Analyzer analyzer) { this.analyzer = analyzer; }
     Wire lower(MethodCallExpr dispatch, SourceIndex.Source source) {
         Wire key = analyzer.codec(dispatch.getScope().orElseThrow(), source);
-        String name = "dispatch_" + Integer.toUnsignedString((source.name() + "#" + dispatch).hashCode());
+        String identity = source.name() + "#" + key.type() + "#" + key.codec() + "#" + key.shape().replace("net.minecraft.core.registries.", "") + "#" + dispatch.getArguments();
+        String name = "dispatch_" + Integer.toUnsignedString(identity.hashCode());
         if (analyzer.dispatches.containsKey(name)) return reference(analyzer.dispatches.get(name));
+        if (!analyzer.activeDispatches.add(name)) throw new Unsupported("Recursive dispatch requires a completed payload schema: " + source.name());
+        try {
         if (!(dispatch.getArgument(1) instanceof MethodReferenceExpr accessor)) throw new Unsupported("Dispatch codec selector is not a method reference");
         var owner = analyzer.index.source(analyzer.index.resolve(accessor.getScope().toString(), source));
         List<DispatchCase> cases;
         if (owner.declaration() instanceof EnumDeclaration enumeration) cases = enumeration(enumeration, accessor.getIdentifier(), owner);
-        else throw new Unsupported("Registry dispatch table is not supported yet: " + dispatch);
+        else if (key.shape().startsWith("REGISTRY:")) cases = registry(dispatch, key, accessor, owner, source);
+        else throw new Unsupported("Unknown dispatch key codec: " + dispatch);
         String type = "org.stackanvil.packetforge.commons.Variant<" + boxed(key.type()) + ">";
         List<String> entries = new ArrayList<>();
         for (var branch : cases) {
@@ -27,8 +31,33 @@ final class DispatchAnalyzer {
             entries.add("java.util.Map.entry(" + discriminator + ", (PacketCodec<?>) " + branch.value().codec() + ")");
         }
         Wire implementation = new Wire(type, "WireCodecs.dispatch(" + key.codec() + ", java.util.Map.ofEntries(" + String.join(", ", entries) + "))", "dispatch:" + name);
-        Dispatch definition = new Dispatch(name, key, List.copyOf(cases), source.name(), dispatch.toString(), implementation);
+        Dispatch definition = new Dispatch(name, key, List.copyOf(cases), source.name(), dispatch.toString(), implementation, key.shape().startsWith("REGISTRY:") ? key.shape().substring(key.shape().lastIndexOf('.') + 1) : "");
         analyzer.dispatches.put(name, definition); return reference(definition);
+        } finally { analyzer.activeDispatches.remove(name); }
+    }
+    private List<DispatchCase> registry(MethodCallExpr dispatch, Wire key, MethodReferenceExpr accessor, SourceIndex.Source accessorOwner, SourceIndex.Source source) {
+        String registry = key.shape().substring(key.shape().lastIndexOf('.') + 1);
+        String diagnostic = registry + "#" + accessorOwner.name() + "." + accessor.getIdentifier();
+        var resolver = new StaticCodecResolver(analyzer);
+        List<RegistrySchema.Entry> entries = new RegistrySchema(analyzer, resolver).entries(registry);
+        List<DispatchCase> cases = new ArrayList<>(); List<RegistryGap> gaps = new ArrayList<>();
+        boolean factory = accessorOwner.declaration().getMethodsByName(accessor.getIdentifier()).stream().anyMatch(m -> m.isStatic() && m.getParameters().size() == 1);
+        for (var entry : entries) {
+            try {
+                var value = factory ? resolver.invoke(new StaticCodecResolver.Value(accessor, source), List.of(entry.value())) : resolver.accessor(entry.value(), accessor.getIdentifier());
+                Wire codec = resolver.codec(value);
+                cases.add(new DispatchCase(Integer.toString(entry.id()), codec, entry.name()));
+            } catch (StaticCodecResolver.Rejected rejected) {
+                Wire codec = new Wire("org.stackanvil.packetforge.commons.Unit", "WireCodecs.rejected(" + new com.google.gson.Gson().toJson(rejected.getMessage()) + ")", "REJECTED:" + rejected.getMessage());
+                cases.add(new DispatchCase(Integer.toString(entry.id()), codec, entry.name()));
+            } catch (Unsupported unsupported) { gaps.add(new RegistryGap(entry.id(), entry.name(), unsupported.getMessage())); }
+        }
+        if (!gaps.isEmpty()) {
+            analyzer.registryGaps.put(diagnostic, List.copyOf(gaps));
+            throw new Unsupported("Registry " + registry + " has " + gaps.size() + " unresolved payload codecs; first: " + gaps.getFirst().name() + ": " + gaps.getFirst().reason());
+        }
+        analyzer.registryGaps.remove(diagnostic);
+        return cases;
     }
     private Wire reference(Dispatch dispatch) { return new Wire(dispatch.implementation().type(), "org.stackanvil.packetforge.protocol.GeneratedWireCodecs." + dispatch.name(), "dispatch:" + dispatch.name()); }
     private List<DispatchCase> enumeration(EnumDeclaration enumeration, String methodName, SourceIndex.Source source) {

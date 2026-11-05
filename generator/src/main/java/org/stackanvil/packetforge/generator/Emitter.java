@@ -12,12 +12,15 @@ final class Emitter {
     private static final String IMPORTS = "import io.netty.buffer.ByteBuf;\nimport org.stackanvil.packetforge.commons.*;\n";
     private static final Gson JSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
     record Report(Map<String, String> provenance, int totalRegistrations, int generatedRegistrations,
-                  int generatedModels, List<Analyzer.Registration> registrations, List<Analyzer.Model> models, List<Analyzer.Dispatch> dispatches) {}
+                  int generatedModels, List<Analyzer.Registration> registrations, List<Analyzer.Model> models, List<Analyzer.Dispatch> dispatches, Map<String, List<Analyzer.RegistryGap>> registryGaps) {}
 
     Report emit(Path output, Map<String, String> provenance, int protocol, List<Analyzer.Registration> registrations, Map<String, Analyzer.Model> allModels) throws IOException {
         return emit(output, provenance, protocol, registrations, allModels, List.of());
     }
     Report emit(Path output, Map<String, String> provenance, int protocol, List<Analyzer.Registration> registrations, Map<String, Analyzer.Model> allModels, List<Analyzer.Dispatch> dispatches) throws IOException {
+        return emit(output, provenance, protocol, registrations, allModels, dispatches, Map.of());
+    }
+    Report emit(Path output, Map<String, String> provenance, int protocol, List<Analyzer.Registration> registrations, Map<String, Analyzer.Model> allModels, List<Analyzer.Dispatch> dispatches, Map<String, List<Analyzer.RegistryGap>> registryGaps) throws IOException {
         Set<String> reachable = new TreeSet<>();
         for (var entry : registrations) if (entry.supported()) visit(entry.originalClass(), allModels, reachable);
         List<Analyzer.Model> models = reachable.stream().map(allModels::get).toList();
@@ -48,7 +51,7 @@ final class Emitter {
         emitDispatches(output, selectedDispatches);
         emitRegistry(output, protocol, registrations);
         int count = (int) registrations.stream().filter(Analyzer.Registration::supported).count();
-        Report report = new Report(new TreeMap<>(provenance), registrations.size(), count, models.size(), registrations, models, selectedDispatches);
+        Report report = new Report(new TreeMap<>(provenance), registrations.size(), count, models.size(), registrations, models, selectedDispatches, new TreeMap<>(registryGaps));
         Path reportFile = output.resolve("resources/packetforge/protocol.json");
         Files.createDirectories(reportFile.getParent());
         Files.writeString(reportFile, JSON.toJson(report) + "\n");

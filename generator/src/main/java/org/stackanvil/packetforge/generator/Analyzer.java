@@ -13,9 +13,16 @@ import static org.stackanvil.packetforge.generator.SourceIndex.Unsupported;
 
 /** Lowers a deliberately bounded AST language to independent wire codecs. */
 final class Analyzer {
-    record Wire(String type, String codec, String shape) {}
-    record DispatchCase(String key, Wire value) {}
-    record Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation) {}
+    record Wire(String type, String codec, String shape, String projection) {
+        Wire(String type, String codec, String shape) { this(type, codec, shape, ""); }
+    }
+    record DispatchCase(String key, Wire value, String name) {
+        DispatchCase(String key, Wire value) { this(key, value, key); }
+    }
+    record Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation, String registry) {
+        Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation) { this(name, key, cases, sourceOwner, originalExpression, implementation, ""); }
+    }
+    record RegistryGap(int id, String name, String reason) {}
     record Field(String name, String originalType, Wire read, Wire write) {}
     record Program(String decode, String encode, List<String> operations, List<String> helpers) {}
     record Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet, List<String> validations, Program program, String factory) {
@@ -42,6 +49,10 @@ final class Analyzer {
     private final Path root;
     final Map<String, Model> models = new TreeMap<>();
     final Map<String, Dispatch> dispatches = new TreeMap<>();
+    final Set<String> activeDispatches = new HashSet<>();
+    final Map<String, List<RegistryGap>> registryGaps = new TreeMap<>();
+    private final Map<String, Wire> bindings = new HashMap<>();
+    NameExpr bind(Wire wire) { String name = "$wire_" + bindings.size(); bindings.put(name, wire); return new NameExpr(name); }
     private final Map<String, String> failures = new HashMap<>();
     private final Set<String> active = new HashSet<>();
     private final Map<String, List<String>> validations = new HashMap<>();
@@ -417,6 +428,26 @@ final class Analyzer {
         return codec(expression, source);
     }
     Wire codec(Expression expression, SourceIndex.Source source) {
+        if (expression instanceof NameExpr bound && bindings.containsKey(bound.getNameAsString())) return bindings.get(bound.getNameAsString());
+        if (expression instanceof ObjectCreationExpr anonymous && anonymous.getAnonymousClassBody().isPresent()) {
+            var methods = anonymous.getAnonymousClassBody().get().stream().filter(m -> m instanceof MethodDeclaration).map(m -> (MethodDeclaration) m).toList();
+            var readers = methods.stream().filter(m -> m.getNameAsString().equals("decode")).toList();
+            var writers = methods.stream().filter(m -> m.getNameAsString().equals("encode")).toList();
+            if (readers.size() == 1 && writers.size() == 1) {
+                var reader = readers.getFirst(); var writer = writers.getFirst();
+                var rb = reader.getBody().orElseThrow(); var wb = writer.getBody().orElseThrow();
+                if (rb.getStatements().size() == 1 && rb.getStatement(0) instanceof ReturnStmt returned && returned.getExpression().orElse(null) instanceof MethodCallExpr read
+                    && wb.getStatements().size() == 1 && wb.getStatement(0) instanceof ExpressionStmt statement && statement.getExpression() instanceof MethodCallExpr write
+                    && read.getScope().map(Object::toString).orElse("").equals("FriendlyByteBuf") && write.getScope().map(Object::toString).orElse("").equals("FriendlyByteBuf")
+                    && read.getNameAsString().startsWith("read") && write.getNameAsString().equals(read.getNameAsString().replaceFirst("read", "write"))
+                    && read.getArguments().size() >= 1 && read.getArgument(0).toString().equals(reader.getParameter(0).getNameAsString())
+                    && write.getArguments().size() == 2 && write.getArgument(0).toString().equals(writer.getParameter(0).getNameAsString()) && write.getArgument(1).toString().equals(writer.getParameter(1).getNameAsString())) {
+                    MethodCallExpr operation = new MethodCallExpr(new NameExpr("input"), read.getNameAsString());
+                    for (int i = 1; i < read.getArguments().size(); i++) operation.addArgument(read.getArgument(i).clone());
+                    return read(operation, "input", source);
+                }
+            }
+        }
         if (expression instanceof FieldAccessExpr access) {
             String owner = index.resolve(access.getScope().toString(), source);
             String field = access.getNameAsString();
@@ -510,6 +541,8 @@ final class Analyzer {
                     if (existing != null && !existing.fields().equals(projected.fields())) throw new Unsupported("Conflicting mapped wire projections for " + targetName);
                     models.putIfAbsent(targetName, projected); return modelWire(models.get(targetName));
                 }
+                // StreamCodec.map changes the domain representation, not the bytes of its base codec.
+                return new Wire(inner.type(), inner.codec(), inner.shape(), source.name() + "#map(" + decode + ", " + encode + ")");
             }
             if (method.equals("apply") && call.getArguments().size() == 1) {
                 Wire inner = codec(call.getScope().get(), source);

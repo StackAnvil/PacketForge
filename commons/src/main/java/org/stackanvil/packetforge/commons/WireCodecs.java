@@ -28,6 +28,9 @@ public final class WireCodecs {
             public void encode(ByteBuf output, T value) { write.accept(output, value); }
         };
     }
+    public static <T> PacketCodec<T> rejected(String reason) {
+        return of(b -> { throw new IllegalArgumentException(reason); }, (b, value) -> { throw new IllegalArgumentException(reason); });
+    }
     public static final PacketCodec<Unit> UNIT = of(b -> Unit.INSTANCE, (b, value) -> { if (value != Unit.INSTANCE) throw new IllegalArgumentException("Expected unit value"); });
     public static <T> PacketCodec<T> lazy(java.util.function.Supplier<PacketCodec<T>> supplier) {
         return new PacketCodec<>() {

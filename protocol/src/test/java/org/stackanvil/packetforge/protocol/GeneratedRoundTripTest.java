@@ -107,7 +107,9 @@ class GeneratedRoundTripTest {
             if (parameterized.getRawType() == Variant.class) {
                 var dispatch = models.get("$" + shape);
                 if (dispatch == null) throw new IllegalArgumentException("Missing dispatch metadata: " + shape);
-                var cases = dispatch.getAsJsonArray("cases"); var branch = cases.get(variant % cases.size()).getAsJsonObject();
+                var cases = new java.util.ArrayList<com.google.gson.JsonObject>();
+                for (var candidate : dispatch.getAsJsonArray("cases")) if (!candidate.getAsJsonObject().getAsJsonObject("value").get("shape").getAsString().startsWith("REJECTED:")) cases.add(candidate.getAsJsonObject());
+                var branch = cases.get(variant % cases.size());
                 Class<?> keyType = (Class<?>) arguments[0]; String keyName = branch.get("key").getAsString();
                 Object key = keyType.isEnum() ? java.util.Arrays.stream(keyType.getEnumConstants()).filter(v -> ((Enum<?>) v).name().equals(keyName)).findFirst().orElseThrow() : Integer.parseInt(keyName);
                 var value = branch.getAsJsonObject("value");
@@ -164,7 +166,11 @@ class GeneratedRoundTripTest {
             Class<?>[] parameters = new Class<?>[components.length]; Object[] values = new Object[components.length];
             for (int i = 0; i < components.length; i++) {
                 parameters[i] = components[i].getType();
-                values[i] = sample(components[i].getGenericType(), fields.get(i).getAsJsonObject().getAsJsonObject("read").get("shape").getAsString(), variant, models);
+                String original = model.get("originalName").getAsString();
+                boolean nonempty = original.equals("net.minecraft.world.level.pathfinder.Path.DebugData") && components[i].getName().equals("targetNodes")
+                        || original.equals("net.minecraft.world.entity.PositionPath.Stepped") && components[i].getName().equals("steps");
+                int fieldVariant = nonempty ? Math.max(1, variant) : variant;
+                values[i] = sample(components[i].getGenericType(), fields.get(i).getAsJsonObject().getAsJsonObject("read").get("shape").getAsString(), fieldVariant, models);
             }
             return clazz.getConstructor(parameters).newInstance(values);
         }
