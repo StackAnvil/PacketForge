@@ -1,16 +1,113 @@
 package org.stackanvil.packetforge.generator;
 
-import static org.stackanvil.packetforge.generator.Analyzer.*;
 import static org.stackanvil.packetforge.generator.SourceIndex.Unsupported;
 
-import com.github.javaparser.ast.body.*;
-import com.github.javaparser.ast.expr.*;
-import com.github.javaparser.ast.stmt.*;
-import java.util.*;
+import com.github.javaparser.ast.body.CompactConstructorDeclaration;
+import com.github.javaparser.ast.body.ConstructorDeclaration;
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.RecordDeclaration;
+import com.github.javaparser.ast.expr.Expression;
+import java.util.List;
+import org.stackanvil.packetforge.generator.Analyzer.Field;
+import org.stackanvil.packetforge.generator.Analyzer.Wire;
+import org.stackanvil.packetforge.generator.AstPattern.Bindings;
 
 /** Recognizes command node flags, registry payloads, and the two graph validation passes. */
 final class CommandPacketAnalyzer {
     record Lowered(List<Field> fields, List<String> validations) {}
+
+    private static final AstPattern PACKET_CODEC = AstPattern.expression("""
+            StreamCodec.composite(
+                $entryCodec.apply(ByteBufCodecs.list()), $first -> $first.entries,
+                ByteBufCodecs.VAR_INT, $second -> $second.rootIndex, $Packet::new)
+            """);
+    private static final AstPattern ENTRY_CODEC = AstPattern.expression("""
+            StreamCodec.of(($output, $value) -> $value.write($output), $Packet::$reader)
+            """);
+    private static final AstPattern NODE_READER = AstPattern.statement("""
+            {
+                byte $flags = $input.readByte();
+                int[] $children = $input.readVarIntArray();
+                int $redirect = ($flags & 8) != 0 ? $input.readVarInt() : 0;
+                $Stub $stub = $readStub($input, $flags);
+                return new $Entry($stub, $flags, $redirect, $children);
+            }
+            """);
+    private static final AstPattern NODE_WRITER = AstPattern.statement("""
+            {
+                $output.writeByte(this.flags);
+                $output.writeVarIntArray(this.children);
+                if ((this.flags & 8) != 0) $output.writeVarInt(this.redirect);
+                if (this.stub != null) this.stub.write($output);
+            }
+            """);
+    private static final AstPattern STUB_READER = AstPattern.statement("""
+            {
+                int $type = $flags & 3;
+                if ($type == 2) {
+                    String $name = $input.readUtf();
+                    int $id = $input.readVarInt();
+                    $Info $info = BuiltInRegistries.COMMAND_ARGUMENT_TYPE.byId($id);
+                    if ($info == null) return null;
+                    $Template $argument = $info.deserializeFromNetwork($input);
+                    $Identifier $suggestion = ($flags & 16) != 0 ? $input.readIdentifier() : null;
+                    return new $Argument($name, $argument, $suggestion);
+                } else if ($type == 1) {
+                    String $literal = $input.readUtf();
+                    return new $Literal($literal);
+                } else return null;
+            }
+            """);
+    private static final AstPattern ARGUMENT_WRITER = AstPattern.statement("""
+            {
+                $output.writeUtf(this.id);
+                $serialize($output, this.argumentType);
+                if (this.suggestionId != null) $output.writeIdentifier(this.suggestionId);
+            }
+            """);
+    private static final AstPattern SELECT_SERIALIZER = AstPattern.statement("""
+            { $serialize($output, $value.type(), $value); }
+            """);
+    private static final AstPattern WRITE_SERIALIZER = AstPattern.statement("""
+            {
+                $output.writeVarInt(BuiltInRegistries.COMMAND_ARGUMENT_TYPE.getId($info));
+                $info.serializeToNetwork((T) $value, $output);
+            }
+            """);
+    private static final AstPattern LITERAL_WRITER = AstPattern.statement("""
+            { $output.writeUtf(this.id); }
+            """);
+    private static final AstPattern PACKET_CONSTRUCTOR = AstPattern.statement("""
+            {
+                this.entries = $entries;
+                this.rootIndex = $root;
+                $validate(this.entries);
+            }
+            """);
+    private static final AstPattern VALIDATION_PASSES = AstPattern.statement("""
+            {
+                $validate($entries, $Entry::$build);
+                $validate($entries, $Entry::$resolve);
+            }
+            """);
+    private static final AstPattern REDIRECT_DEPENDENCIES = AstPattern.statement("""
+            { return (this.flags & 8) != 0 ? !$pending.contains(this.redirect) : true; }
+            """);
+    private static final AstPattern CHILD_DEPENDENCIES = AstPattern.statement("""
+            {
+                for (int $child : this.children) if ($pending.contains($child)) return false;
+                return true;
+            }
+            """);
+    private static final AstPattern GRAPH_ELIMINATION = AstPattern.statement("""
+            {
+                $Set $pending = new IntOpenHashSet(IntSets.fromTo(0, $entries.size()));
+                while (!$pending.isEmpty()) {
+                    boolean $worked = $pending.removeIf($index -> $predicate.test($entries.get($index), $pending));
+                    if (!$worked) throw new IllegalStateException("Server sent an impossible command tree");
+                }
+            }
+            """);
 
     private final Analyzer analyzer;
 
@@ -19,293 +116,166 @@ final class CommandPacketAnalyzer {
     }
 
     Lowered lower(Expression codec, SourceIndex.Source source) {
-        if (!(codec instanceof MethodCallExpr composite)
-                || !composite.getNameAsString().equals("composite")
-                || composite.getArguments().size() != 5
-                || !composite.getArgument(0).toString().equals("ENTRY_STREAM_CODEC.apply(ByteBufCodecs.list())")
-                || !composite.getArgument(2).toString().equals("ByteBufCodecs.VAR_INT")
-                || !composite
-                        .getArgument(4)
-                        .toString()
-                        .equals(source.declaration().getNameAsString() + "::new"))
-            throw new Unsupported("Unknown command packet composite layout");
-        for (int i : new int[] {1, 3})
-            if (!(composite.getArgument(i) instanceof LambdaExpr getter)
-                    || getter.getParameters().size() != 1
-                    || !(getter.getBody() instanceof ExpressionStmt e)
-                    || !e.getExpression()
-                            .toString()
-                            .equals(getter.getParameter(0).getNameAsString()
-                                    + "."
-                                    + (i == 1 ? "entries" : "rootIndex")))
-                throw new Unsupported("Unknown command packet getters");
-        var entryCodec = source.declaration()
-                .getFieldByName("ENTRY_STREAM_CODEC")
-                .orElseThrow()
+        var entry = inspect(codec, source);
+        return layout(entry, new CommandArgumentAnalyzer(analyzer).table());
+    }
+
+    SourceIndex.Source inspect(Expression codec, SourceIndex.Source source) {
+        var packet = PACKET_CODEC.require(codec, AstPattern.bindings(), "Unknown command packet composite layout");
+        requireOwner(packet, "Packet", source, source.name());
+        var initializer = source.declaration()
+                .getFieldByName(packet.name("entryCodec"))
+                .orElseThrow(() -> new Unsupported("Missing command entry codec"))
                 .getVariable(0)
                 .getInitializer()
-                .orElseThrow();
-        if (!(entryCodec instanceof MethodCallExpr pair)
-                || !pair.getNameAsString().equals("of")
-                || pair.getArguments().size() != 2
-                || !(pair.getArgument(0) instanceof LambdaExpr writer)
-                || writer.getParameters().size() != 2
-                || !(writer.getBody() instanceof ExpressionStmt e)
-                || !e.getExpression()
-                        .toString()
-                        .equals(writer.getParameter(1).getNameAsString()
-                                + ".write("
-                                + writer.getParameter(0).getNameAsString()
-                                + ")")
-                || !(pair.getArgument(1) instanceof MethodReferenceExpr reader)
-                || !reader.getIdentifier().equals("readNode")
-                || !analyzer.index.resolve(reader.getScope().toString(), source).equals(source.name()))
-            throw new Unsupported("Unknown command entry codec");
-        var read = method(source, "readNode", 1);
-        String input = read.getParameter(0).getNameAsString();
-        var body = read.getBody().orElseThrow().getStatements();
-        if (body.size() != 5
-                || !body.get(0).toString().equals("byte flags = " + input + ".readByte();")
-                || !body.get(1).toString().equals("int[] children = " + input + ".readVarIntArray();")
-                || !body.get(2).toString().equals("int redirect = (flags & 8) != 0 ? " + input + ".readVarInt() : 0;")
-                || !(body.get(3) instanceof ExpressionStmt declaration)
-                || !(declaration.getExpression() instanceof VariableDeclarationExpr variables)
-                || variables.getVariables().size() != 1
-                || !variables
-                        .getVariable(0)
-                        .getInitializer()
-                        .map(Object::toString)
-                        .orElse("")
-                        .equals("read(" + input + ", flags)")
-                || !(body.get(4) instanceof ReturnStmt returned)
-                || !(returned.getExpression().orElse(null) instanceof ObjectCreationExpr entry)
-                || !entry.getArguments().stream()
-                        .map(Object::toString)
-                        .toList()
-                        .equals(List.of("stub", "flags", "redirect", "children")))
-            throw new Unsupported("Unknown command node header or flag layout");
-        var entrySource = analyzer.index.source(analyzer.index.resolve(entry.getTypeAsString(), source));
-        var encode = method(entrySource, "write", 1);
-        String output = encode.getParameter(0).getNameAsString();
-        var writes = encode.getBody().orElseThrow().getStatements();
-        if (writes.size() != 4
-                || !writes.get(0).toString().equals(output + ".writeByte(this.flags);")
-                || !writes.get(1).toString().equals(output + ".writeVarIntArray(this.children);")
-                || !(writes.get(2) instanceof IfStmt redirect)
-                || !redirect.getCondition().toString().equals("(this.flags & 8) != 0")
-                || !single(redirect.getThenStmt()).toString().equals(output + ".writeVarInt(this.redirect);")
-                || redirect.getElseStmt().isPresent()
-                || !(writes.get(3) instanceof IfStmt stub)
-                || !stub.getCondition().toString().equals("this.stub != null")
-                || !single(stub.getThenStmt()).toString().equals("this.stub.write(" + output + ");")
-                || stub.getElseStmt().isPresent()) throw new Unsupported("Command node writer differs from its reader");
-        verifyStub(source);
-        verifyValidation(source, entrySource);
-        Wire table = new CommandArgumentAnalyzer(analyzer).table();
+                .orElseThrow(() -> new Unsupported("Uninitialized command entry codec"));
+        var pair = ENTRY_CODEC.require(initializer, AstPattern.bindings(), "Unknown command entry codec");
+        requireOwner(pair, "Packet", source, source.name());
+        var reader = method(source, pair.name("reader"), 1);
+        var header = NODE_READER.require(
+                reader.getBody().orElseThrow(),
+                parameters(reader, "input"),
+                "Unknown command node header or flag layout");
+        var entry = capturedSource(header, "Entry", source);
+        requireWireRecord(entry, List.of("stub", "flags", "redirect", "children"));
+        var writer = method(entry, "write", 1);
+        NODE_WRITER.require(
+                writer.getBody().orElseThrow(),
+                parameters(writer, "output"),
+                "Command node writer differs from its reader");
+        verifyStubs(source, header.name("readStub"));
+        verifyValidation(source, entry);
+        return entry;
+    }
+
+    private Lowered layout(SourceIndex.Source entry, Wire table) {
         String name = table.shape().substring("dispatch:".length());
         Wire entries = new Wire(
                 "java.util.List<org.stackanvil.packetforge.commons.CommandNode>",
-                "WireCodecs.list(CommandTreeCodecs.node(org.stackanvil.packetforge.protocol.GeneratedWireCodecs."
-                        + name
+                "WireCodecs.list(CommandTreeCodecs.node(org.stackanvil.packetforge.protocol.GeneratedWireCodecs." + name
                         + "_payloads()), Integer.MAX_VALUE)",
                 "command-nodes<" + table.shape() + ">");
         Wire root = new Wire("int", "WireCodecs.VAR_INT", "VAR_INT");
         return new Lowered(
                 List.of(
-                        new Field("entries", "List<" + entrySource.name() + ">", entries, entries),
+                        new Field("entries", "List<" + entry.name() + ">", entries, entries),
                         new Field("rootIndex", "int", root, root)),
                 List.of("CommandTreeCodecs.validate(entries);"));
     }
 
-    private void verifyStub(SourceIndex.Source source) {
-        var read = method(source, "read", 2);
-        String input = read.getParameter(0).getNameAsString(),
-                flags = read.getParameter(1).getNameAsString();
-        var body = read.getBody().orElseThrow().getStatements();
-        if (body.size() != 2
-                || !body.get(0).toString().equals("int type = " + flags + " & 3;")
-                || !(body.get(1) instanceof IfStmt argument)
-                || !argument.getCondition().toString().equals("type == 2")
-                || !(argument.getThenStmt() instanceof BlockStmt args)
-                || args.getStatements().size() != 7
-                || !(argument.getElseStmt().orElse(null) instanceof IfStmt literal)
-                || !literal.getCondition().toString().equals("type == 1"))
-            throw new Unsupported("Unknown command stub discriminator");
-        if (!args.getStatement(0).toString().equals("String name = " + input + ".readUtf();")
-                || !args.getStatement(1).toString().equals("int id = " + input + ".readVarInt();")
-                || !(args.getStatement(2) instanceof ExpressionStmt registry)
-                || !(registry.getExpression() instanceof VariableDeclarationExpr vars)
-                || !vars.getVariable(0)
-                        .getInitializer()
-                        .map(Object::toString)
-                        .orElse("")
-                        .equals("BuiltInRegistries.COMMAND_ARGUMENT_TYPE.byId(id)")
-                || !(args.getStatement(3) instanceof IfStmt unknown)
-                || !unknown.getCondition().toString().equals("argumentType == null")
-                || !single(unknown.getThenStmt()).toString().equals("return null;")
-                || unknown.getElseStmt().isPresent())
-            throw new Unsupported("Unknown command argument ID lookup or fallback");
-        if (!(args.getStatement(4) instanceof ExpressionStmt decode)
-                || !(decode.getExpression() instanceof VariableDeclarationExpr decoded)
-                || !decoded.getVariable(0)
-                        .getInitializer()
-                        .map(Object::toString)
-                        .orElse("")
-                        .equals("argumentType.deserializeFromNetwork(" + input + ")")
-                || !(args.getStatement(5) instanceof ExpressionStmt suggestions)
-                || !(suggestions.getExpression() instanceof VariableDeclarationExpr suggested)
-                || !suggested
-                        .getVariable(0)
-                        .getInitializer()
-                        .map(Object::toString)
-                        .orElse("")
-                        .equals("(" + flags + " & 16) != 0 ? " + input + ".readIdentifier() : null")
-                || !(args.getStatement(6) instanceof ReturnStmt returned)
-                || !(returned.getExpression().orElse(null) instanceof ObjectCreationExpr created)
-                || !created.getArguments().stream()
-                        .map(Object::toString)
-                        .toList()
-                        .equals(List.of("name", "argument", "suggestionId")))
-            throw new Unsupported("Unknown command argument payload or suggestion layout");
-        var argumentSource = analyzer.index.source(analyzer.index.resolve(created.getTypeAsString(), source));
-        var writer = method(argumentSource, "write", 1);
-        String output = writer.getParameter(0).getNameAsString();
-        var writes = writer.getBody().orElseThrow().getStatements();
-        if (writes.size() != 3
-                || !writes.get(0).toString().equals(output + ".writeUtf(this.id);")
-                || !writes.get(1).toString().equals("serializeCap(" + output + ", this.argumentType);")
-                || !(writes.get(2) instanceof IfStmt suggestion)
-                || !suggestion.getCondition().toString().equals("this.suggestionId != null")
-                || !single(suggestion.getThenStmt()).toString().equals(output + ".writeIdentifier(this.suggestionId);")
-                || suggestion.getElseStmt().isPresent()) throw new Unsupported("Unknown command argument writer");
-        var cap = method(argumentSource, "serializeCap", 2);
-        String out = cap.getParameter(0).getNameAsString(),
-                value = cap.getParameter(1).getNameAsString();
-        if (!cap.getBody()
-                .orElseThrow()
-                .getStatements()
-                .toString()
-                .equals("[serializeCap(" + out + ", " + value + ".type(), " + value + ");]"))
-            throw new Unsupported("Argument serializer selection transforms its type");
-        var network = method(argumentSource, "serializeCap", 3);
-        var operations = network.getBody().orElseThrow().getStatements();
-        out = network.getParameter(0).getNameAsString();
-        String info = network.getParameter(1).getNameAsString();
-        value = network.getParameter(2).getNameAsString();
-        if (operations.size() != 2
-                || !operations
-                        .get(0)
-                        .toString()
-                        .equals(out + ".writeVarInt(BuiltInRegistries.COMMAND_ARGUMENT_TYPE.getId(" + info + "));")
-                || !operations.get(1).toString().equals(info + ".serializeToNetwork((T) " + value + ", " + out + ");"))
-            throw new Unsupported("Unknown command argument network writer");
-        if (!(literal.getThenStmt() instanceof BlockStmt literals)
-                || literals.getStatements().size() != 2
-                || !literals.getStatement(0).toString().equals("String id = " + input + ".readUtf();")
-                || !(literals.getStatement(1) instanceof ReturnStmt result)
-                || !(result.getExpression().orElse(null) instanceof ObjectCreationExpr payload)
-                || !payload.getArguments().toString().equals("[id]")
-                || !single(literal.getElseStmt().orElseThrow()).toString().equals("return null;"))
-            throw new Unsupported("Unknown literal/root command payload");
-        var literalSource = analyzer.index.source(analyzer.index.resolve(payload.getTypeAsString(), source));
-        var literalWriter = method(literalSource, "write", 1);
-        if (!literalWriter
-                .getBody()
-                .orElseThrow()
-                .getStatements()
-                .toString()
-                .equals("[" + literalWriter.getParameter(0).getNameAsString() + ".writeUtf(this.id);]"))
-            throw new Unsupported("Literal node writer has additional operations");
+    private void verifyStubs(SourceIndex.Source source, String helper) {
+        var reader = method(source, helper, 2);
+        var stubs = STUB_READER.require(
+                reader.getBody().orElseThrow(),
+                parameters(reader, "input", "flags"),
+                "Unknown command argument payload or suggestion layout");
+        var argument = capturedSource(stubs, "Argument", source);
+        requireWireRecord(argument, List.of("id", "argumentType", "suggestionId"));
+        var writer = method(argument, "write", 1);
+        var written = ARGUMENT_WRITER.require(
+                writer.getBody().orElseThrow(), parameters(writer, "output"), "Unknown command argument writer");
+        verifyArgumentSerializer(argument, written.name("serialize"));
+        var literal = capturedSource(stubs, "Literal", source);
+        requireWireRecord(literal, List.of("id"));
+        var literalWriter = method(literal, "write", 1);
+        LITERAL_WRITER.require(
+                literalWriter.getBody().orElseThrow(),
+                parameters(literalWriter, "output"),
+                "Literal node writer has additional operations");
+    }
+
+    private void verifyArgumentSerializer(SourceIndex.Source source, String helper) {
+        var selector = method(source, helper, 2);
+        SELECT_SERIALIZER.require(
+                selector.getBody().orElseThrow(),
+                parameters(selector, "output", "value").withName("serialize", helper),
+                "Argument serializer selection transforms its type");
+        var network = method(source, helper, 3);
+        WRITE_SERIALIZER.require(
+                network.getBody().orElseThrow(),
+                parameters(network, "output", "info", "value"),
+                "Unknown command argument network writer");
     }
 
     private void verifyValidation(SourceIndex.Source source, SourceIndex.Source entry) {
         var constructors = source.declaration().getMembers().stream()
-                .filter(m -> m instanceof ConstructorDeclaration c
-                        && c.getParameters().size() == 2
-                        && c.getParameter(0).getTypeAsString().startsWith("List<"))
-                .map(m -> (ConstructorDeclaration) m)
+                .filter(member -> member instanceof ConstructorDeclaration constructor
+                        && constructor.getParameters().size() == 2
+                        && constructor.getParameter(0).getType().isClassOrInterfaceType()
+                        && constructor
+                                .getParameter(0)
+                                .getType()
+                                .asClassOrInterfaceType()
+                                .getNameAsString()
+                                .equals("List"))
+                .map(member -> (ConstructorDeclaration) member)
                 .toList();
-        if (constructors.size() != 1
-                || !constructors.getFirst().getBody().getStatements().stream()
-                        .map(Object::toString)
+        if (constructors.size() != 1) throw new Unsupported("Ambiguous command packet constructor");
+        var constructor = constructors.getFirst();
+        var construct = PACKET_CONSTRUCTOR.require(
+                constructor.getBody(),
+                AstPattern.bindings()
+                        .withName("entries", constructor.getParameter(0).getNameAsString())
+                        .withName("root", constructor.getParameter(1).getNameAsString()),
+                "Command packet constructor has additional validation or transforms");
+        String validation = construct.name("validate");
+        var passes = method(source, validation, 1);
+        var validators = VALIDATION_PASSES.require(
+                passes.getBody().orElseThrow(),
+                parameters(passes, "entries").withName("validate", validation),
+                "Unknown command graph validation passes");
+        requireOwner(validators, "Entry", source, entry.name());
+        var build = method(entry, validators.name("build"), 1);
+        REDIRECT_DEPENDENCIES.require(
+                build.getBody().orElseThrow(), parameters(build, "pending"), "Unknown command redirect dependencies");
+        var resolve = method(entry, validators.name("resolve"), 1);
+        CHILD_DEPENDENCIES.require(
+                resolve.getBody().orElseThrow(), parameters(resolve, "pending"), "Unknown command child dependencies");
+        var graph = method(source, validation, 2);
+        GRAPH_ELIMINATION.require(
+                graph.getBody().orElseThrow(),
+                parameters(graph, "entries", "predicate"),
+                "Unknown command graph elimination algorithm");
+    }
+
+    private Bindings parameters(MethodDeclaration method, String... roles) {
+        var bindings = AstPattern.bindings();
+        for (int i = 0; i < roles.length; i++)
+            bindings = bindings.withName(roles[i], method.getParameter(i).getNameAsString());
+        return bindings;
+    }
+
+    private void requireWireRecord(SourceIndex.Source source, List<String> fields) {
+        if (!(source.declaration() instanceof RecordDeclaration record)
+                || !record.getParameters().stream()
+                        .map(parameter -> parameter.getNameAsString())
                         .toList()
-                        .equals(List.of(
-                                "this.entries = entries;",
-                                "this.rootIndex = rootIndex;",
-                                "validateEntries(this.entries);")))
-            throw new Unsupported("Command packet constructor has additional validation or transforms");
-        var validator = method(source, "validateEntries", 1);
-        if (!validator.getBody().orElseThrow().getStatements().stream()
-                .map(Object::toString)
-                .toList()
-                .equals(List.of(
-                        "validateEntries(entries, " + source.declaration().getNameAsString() + ".Entry::canBuild);",
-                        "validateEntries(entries, " + source.declaration().getNameAsString() + ".Entry::canResolve);")))
-            throw new Unsupported("Unknown command graph validation passes");
-        var build = method(entry, "canBuild", 1);
-        if (!single(build.getBody().orElseThrow())
-                .toString()
-                .equals("return (this.flags & 8) != 0 ? !"
-                        + build.getParameter(0).getNameAsString()
-                        + ".contains(this.redirect) : true;"))
-            throw new Unsupported("Unknown command redirect dependencies");
-        var resolve = method(entry, "canResolve", 1);
-        var body = resolve.getBody().orElseThrow().getStatements();
-        if (body.size() != 2
-                || !(body.get(0) instanceof ForEachStmt loop)
-                || !loop.getIterable().toString().equals("this.children")
-                || !(single(loop.getBody()) instanceof IfStmt child)
-                || !child.getCondition()
-                        .toString()
-                        .equals(resolve.getParameter(0).getNameAsString()
-                                + ".contains("
-                                + loop.getVariable().getVariable(0).getNameAsString()
-                                + ")")
-                || !single(child.getThenStmt()).toString().equals("return false;")
-                || child.getElseStmt().isPresent()
-                || !body.get(1).toString().equals("return true;"))
-            throw new Unsupported("Unknown command child dependencies");
-        var graph = method(source, "validateEntries", 2);
-        var statements = graph.getBody().orElseThrow().getStatements();
-        if (statements.size() != 2
-                || !(statements.get(1) instanceof WhileStmt whileLoop)
-                || !whileLoop.getCondition().toString().equals("!elementsToCheck.isEmpty()")
-                || !(whileLoop.getBody() instanceof BlockStmt iteration)
-                || iteration.getStatements().size() != 2
-                || !(iteration.getStatement(0) instanceof ExpressionStmt removed)
-                || !(removed.getExpression() instanceof VariableDeclarationExpr values)
-                || !values.getVariable(0)
-                        .getInitializer()
-                        .map(Object::toString)
-                        .orElse("")
-                        .equals(
-                                "elementsToCheck.removeIf(index -> validator.test(entries.get(index), elementsToCheck))")
-                || !(iteration.getStatement(1) instanceof IfStmt failure)
-                || !failure.getCondition().toString().equals("!worked")
-                || !(single(failure.getThenStmt()) instanceof ThrowStmt))
-            throw new Unsupported("Unknown command graph elimination algorithm");
-        if (!(statements.get(0) instanceof ExpressionStmt initial)
-                || !(initial.getExpression() instanceof VariableDeclarationExpr variables)
-                || !variables
-                        .getVariable(0)
-                        .getInitializer()
-                        .map(Object::toString)
-                        .orElse("")
-                        .equals("new IntOpenHashSet(IntSets.fromTo(0, entries.size()))"))
-            throw new Unsupported("Command graph validator starts with a different node set");
+                        .equals(fields)
+                || record.getMembers().stream()
+                        .anyMatch(member -> member instanceof CompactConstructorDeclaration
+                                || member instanceof ConstructorDeclaration constructor
+                                        && constructor.getParameters().size() == fields.size())) {
+            throw new Unsupported("Command wire record has a different layout or constructor: " + source.name());
+        }
+    }
+
+    private SourceIndex.Source capturedSource(Bindings bindings, String role, SourceIndex.Source owner) {
+        String name = bindings.type(role).asClassOrInterfaceType().getNameWithScope();
+        return analyzer.index.source(analyzer.index.resolve(name, owner));
+    }
+
+    private void requireOwner(Bindings bindings, String role, SourceIndex.Source source, String expected) {
+        if (!capturedSource(bindings, role, source).name().equals(expected)) {
+            throw new Unsupported("Command " + role + " reference belongs to another type");
+        }
     }
 
     private MethodDeclaration method(SourceIndex.Source source, String name, int parameters) {
         var methods = source.declaration().getMethodsByName(name).stream()
-                .filter(m ->
-                        m.getParameters().size() == parameters && m.getBody().isPresent())
+                .filter(method -> method.getParameters().size() == parameters
+                        && method.getBody().isPresent())
                 .toList();
         if (methods.size() != 1) throw new Unsupported("Ambiguous command packet helper: " + name);
         return methods.getFirst();
-    }
-
-    private Statement single(Statement statement) {
-        if (statement instanceof BlockStmt block && block.getStatements().size() == 1) return block.getStatement(0);
-        return statement;
     }
 }
