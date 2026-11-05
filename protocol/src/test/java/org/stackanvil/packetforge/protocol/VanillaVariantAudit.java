@@ -26,8 +26,30 @@ final class VanillaVariantAudit {
     }
     static void run(ClassLoader loader, Map<String, JsonObject> models, Object registries, Class<?> byteBuf, Class<?> unpooled, Class<?> friendly, Class<?> registryAccess, Method decode, Method encode) throws Exception {
         var audit = new VanillaVariantAudit(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
-        audit.named(); audit.fallbacks(); audit.context(); audit.loginQueries();
+        audit.named(); audit.fallbacks(); audit.context(); audit.loginQueries(); audit.actionFailures();
         System.out.println("Verified " + audit.compared + " named-codec, context, and custom-payload boundary cases against vanilla");
+    }
+    private void actionFailures() throws Exception {
+        String name = "org.stackanvil.packetforge.protocol.packet.game.ClientboundPlayerInfoUpdatePacket";
+        @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) Class.forName(name).getField("CODEC").get(null);
+        Object source = source(models.get(name));
+        var failures = new java.util.ArrayList<byte[]>(); failures.add(new byte[0]); failures.add(new byte[]{0, 1});
+        failures.add(new byte[]{0, -1, -1, -1, -1, 15});
+        for (int action : new int[]{1, 4, 5}) {
+            ByteBuf buffer = Unpooled.buffer();
+            try {
+                buffer.writeByte(1 << action); buffer.writeByte(1); buffer.writeZero(16);
+                if (action == 4) for (int i = 0; i < 6; i++) buffer.writeByte(128);
+                else { buffer.writeByte(1); if (action == 5) buffer.writeByte(0); }
+                byte[] bytes = new byte[buffer.readableBytes()]; buffer.readBytes(bytes); failures.add(bytes);
+            } finally { buffer.release(); }
+        }
+        for (byte[] bytes : failures) {
+            ByteBuf input = Unpooled.wrappedBuffer(bytes);
+            try { assertThrows(RuntimeException.class, () -> generated.decode(input)); }
+            finally { input.release(); }
+            assertThrows(java.lang.reflect.InvocationTargetException.class, () -> sourceDecode(source, bytes)); compared++;
+        }
     }
     private void loginQueries() throws Exception {
         for (boolean answer : new boolean[]{false, true}) {

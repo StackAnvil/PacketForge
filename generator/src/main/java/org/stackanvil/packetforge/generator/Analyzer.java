@@ -203,7 +203,9 @@ final class Analyzer {
             List<Field> fields;
             Program program = null; String decodeFailure = "";
             try {
-            if (Set.of("net.minecraft.network.protocol.login.ClientboundCustomQueryPacket", "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket").contains(name)) {
+            if (name.equals("net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket")) {
+                var lowered = new ActionSetAnalyzer(this).lower(codec, source, generated); fields = lowered.fields(); program = lowered.program();
+            } else if (Set.of("net.minecraft.network.protocol.login.ClientboundCustomQueryPacket", "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket").contains(name)) {
                 fields = new LoginQueryAnalyzer(this).lower(codec, source);
             } else if (codec instanceof MethodCallExpr call && call.getScope().map(Object::toString).orElse("").equals("StreamCodec") && call.getNameAsString().equals("unit")) {
                 fields = List.of();

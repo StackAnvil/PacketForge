@@ -27,6 +27,9 @@ final class LinearWireProjection {
                 if (readers.size() != 1) throw new Unsupported("Ambiguous wire-projection reader"); read = readers.getFirst().getBody().orElseThrow(() -> new Unsupported("Projected reader has no body")); input = readers.getFirst().getParameter(0).getNameAsString();
             }
         } else throw new Unsupported("Not an independent linear wire projection");
+        return lowerBodies(read, write, input, output, source);
+    }
+    List<Field> lowerBodies(BlockStmt read, BlockStmt write, String input, String output, SourceIndex.Source source) {
         List<Field> fields = new ArrayList<>(); Set<String> names = new HashSet<>(); boolean finished = false;
         for (var statement : read.getStatements()) {
             String name = null, originalType = null; Expression value = null;
