@@ -19,7 +19,8 @@ final class Analyzer {
     record DispatchCase(String key, Wire value, String name) {
         DispatchCase(String key, Wire value) { this(key, value, key); }
     }
-    record Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation, String registry) {
+    record Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation, String registry, String sourceCodecField) {
+        Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation, String registry) { this(name, key, cases, sourceOwner, originalExpression, implementation, registry, "STREAM_CODEC"); }
         Dispatch(String name, Wire key, List<DispatchCase> cases, String sourceOwner, String originalExpression, Wire implementation) { this(name, key, cases, sourceOwner, originalExpression, implementation, ""); }
     }
     record RegistryGap(int id, String name, String reason) {}
@@ -109,7 +110,32 @@ final class Analyzer {
         if (registrations.isEmpty()) throw new Unsupported("No protocol registrations found");
         Set<String> keys = new HashSet<>();
         for (var registration : registrations) if (!keys.add(registration.state() + ":" + registration.flow() + ":" + registration.id())) throw new Unsupported("Duplicate protocol registration");
-        return List.copyOf(registrations);
+        List<Registration> checked = new ArrayList<>();
+        for (var entry : registrations) {
+            String missing = entry.supported() ? missingSchema(models.get(entry.originalClass()), new HashSet<>()) : "";
+            checked.add(missing.isEmpty() ? entry : new Registration(entry.state(), entry.flow(), entry.id(), entry.name(), entry.originalClass(), entry.codecExpression(), entry.source(), entry.line(), false, missing, ""));
+        }
+        return List.copyOf(checked);
+    }
+    private String missingSchema(Model model, Set<String> visited) {
+        if (!visited.add("model:" + model.originalName())) return "";
+        String text = model.fields().toString() + " " + model.program();
+        return missingSchema(text, visited);
+    }
+    private String missingSchema(String text, Set<String> visited) {
+        var references = java.util.regex.Pattern.compile("GeneratedWireCodecs\\.(dispatch_[0-9]+)").matcher(text);
+        while (references.find()) {
+            String name = references.group(1);
+            if (!visited.add(name)) continue;
+            Dispatch definition = dispatches.get(name);
+            if (definition == null) return "Unresolved recursive codec table: " + name;
+            String missing = missingSchema(definition.implementation().codec(), visited);
+            if (!missing.isEmpty()) return missing;
+        }
+        for (var candidate : models.values()) if (java.util.regex.Pattern.compile("\\b" + java.util.regex.Pattern.quote(candidate.generatedName()) + "\\b").matcher(text).find()) {
+            String missing = missingSchema(candidate, visited); if (!missing.isEmpty()) return missing;
+        }
+        return "";
     }
     private void collectChain(Expression expression, String builder, List<MethodCallExpr> chain) {
         if (expression instanceof NameExpr name && name.getNameAsString().equals(builder)) return;
@@ -188,7 +214,8 @@ final class Analyzer {
                     throw original;
                 }
             }
-            Model model = new Model(name, index.generated(name), fields, List.of(), packet, validations.getOrDefault(name, List.of()), program);
+            List<String> guards = new ArrayList<>(validations.getOrDefault(name, List.of())); guards.addAll(recordGuards(source, fields));
+            Model model = new Model(name, index.generated(name), fields, List.of(), packet, List.copyOf(guards), program);
             models.put(name, model); return model;
         } catch (Unsupported e) { failures.put(name, e.getMessage()); throw e; }
         finally { active.remove(name); }
@@ -329,32 +356,56 @@ final class Analyzer {
         }
         if (!(lookup instanceof NameExpr byId)) throw new Unsupported("Enum ID lookup is not a local constant");
         Expression initializer = source.declaration().getFieldByName(byId.getNameAsString()).orElseThrow().getVariable(0).getInitializer().orElseThrow();
-        if (!(initializer instanceof MethodCallExpr continuous) || !continuous.getScope().map(Object::toString).orElse("").equals("ByIdMap") || !continuous.getNameAsString().equals("continuous") || continuous.getArguments().size() != 3 || !enumIdField(continuous.getArgument(0), source).equals(idField) || !continuous.getArgument(1).toString().equals("values()")) throw new Unsupported("Enum ID lookup is not a matching continuous map");
+        if (!(initializer instanceof MethodCallExpr continuous) || !continuous.getScope().map(Object::toString).orElse("").equals("ByIdMap") || !Set.of("continuous", "sparse").contains(continuous.getNameAsString()) || continuous.getArguments().size() != 3 || !enumIdField(continuous.getArgument(0), source).equals(idField) || !isEnumValues(continuous.getArgument(1), source)) throw new Unsupported("Enum ID lookup is not a matching continuous map");
+        boolean sparse = continuous.getNameAsString().equals("sparse");
         String policy = continuous.getArgument(2).toString();
-        if (!Set.of("ByIdMap.OutOfBoundsStrategy.ZERO", "ByIdMap.OutOfBoundsStrategy.WRAP", "ByIdMap.OutOfBoundsStrategy.CLAMP").contains(policy)) throw new Unsupported("Unknown enum ID fallback");
+        String defaultConstant = sparse ? enumConstant(continuous.getArgument(2), source) : "";
+        if (!sparse && !Set.of("ByIdMap.OutOfBoundsStrategy.ZERO", "ByIdMap.OutOfBoundsStrategy.WRAP", "ByIdMap.OutOfBoundsStrategy.CLAMP").contains(policy)) throw new Unsupported("Unknown enum ID fallback");
         var constructors = source.declaration().getMembers().stream().filter(m -> m instanceof ConstructorDeclaration).map(m -> (ConstructorDeclaration) m).toList();
         if (idField.equals("$ordinal")) {
             Model enumeration = model(source.name());
             return new Wire(enumeration.generatedName(), "WireCodecs.enumIds(" + enumeration.generatedName() + ".values(), new int[]{" + String.join(", ", java.util.stream.IntStream.range(0, enumeration.constants().size()).mapToObj(Integer::toString).toList()) + "}, WireCodecs.VAR_INT, WireCodecs.EnumFallback." + policy.substring(policy.lastIndexOf('.') + 1) + ")", "enum:" + source.name());
         }
-        if (constructors.size() != 1) throw new Unsupported("Ambiguous enum constructor");
-        var constructor = constructors.getFirst();
-        String parameter = null;
-        for (var assignment : constructor.findAll(AssignExpr.class)) {
-            if (assignment.getTarget() instanceof FieldAccessExpr target && target.getScope() instanceof ThisExpr && target.getNameAsString().equals(idField)) {
-                if (parameter != null || assignment.getOperator() != AssignExpr.Operator.ASSIGN || !(assignment.getValue() instanceof NameExpr name)) throw new Unsupported("Enum ID constructor transforms its value");
-                parameter = name.getNameAsString();
+        List<String> ids = new ArrayList<>();
+        for (var constant : ((EnumDeclaration) source.declaration()).getEntries()) ids.add(integer(enumConstructorField(constructors, constant.getArguments(), idField, new HashSet<>()), source));
+        if (!sparse && !ids.stream().map(Integer::parseInt).sorted().toList().equals(java.util.stream.IntStream.range(0, ids.size()).boxed().toList())) throw new Unsupported("Enum IDs are not continuous");
+        Model enumeration = model(source.name());
+        return new Wire(enumeration.generatedName(), "WireCodecs." + (sparse ? "enumIdsOrDefault" : "enumIds") + "(" + enumeration.generatedName() + ".values(), new int[]{" + String.join(", ", ids) + "}, WireCodecs.VAR_INT, " + (sparse ? enumeration.generatedName() + "." + defaultConstant : "WireCodecs.EnumFallback." + policy.substring(policy.lastIndexOf('.') + 1)) + ")", "enum:" + source.name());
+    }
+    private boolean isEnumValues(Expression expression, SourceIndex.Source source) {
+        if (expression.toString().equals("values()")) return true;
+        if (expression instanceof MethodCallExpr array && array.getNameAsString().equals("toArray") && array.getScope().orElse(null) instanceof NameExpr list) {
+            var initializer = source.declaration().getFieldByName(list.getNameAsString()).flatMap(f -> f.getVariable(0).getInitializer()).orElse(null);
+            return initializer instanceof MethodCallExpr call && call.getScope().map(Object::toString).orElse("").equals("List") && call.getNameAsString().equals("of") && call.getArguments().size() == 1 && call.getArgument(0).toString().equals("values()");
+        }
+        return false;
+    }
+    private String enumConstant(Expression expression, SourceIndex.Source source) {
+        String name = expression.toString();
+        if (source.declaration() instanceof EnumDeclaration e && e.getEntries().stream().anyMatch(c -> c.getNameAsString().equals(name))) return name;
+        if (expression instanceof NameExpr) return enumConstant(source.declaration().getFieldByName(name).flatMap(f -> f.getVariable(0).getInitializer()).orElseThrow(() -> new Unsupported("Unknown enum default: " + name)), source);
+        throw new Unsupported("Enum default is not a constant: " + expression);
+    }
+    private Expression substitute(Expression expression, Map<String, Expression> variables) {
+        if (expression instanceof NameExpr n && variables.containsKey(n.getNameAsString())) return variables.get(n.getNameAsString()).clone();
+        Expression result = expression.clone();
+        for (var name : result.findAll(NameExpr.class)) if (variables.containsKey(name.getNameAsString())) name.replace(variables.get(name.getNameAsString()).clone());
+        return result;
+    }
+    private Expression enumConstructorField(List<ConstructorDeclaration> constructors, List<Expression> args, String field, Set<ConstructorDeclaration> visited) {
+        List<Expression> values = new ArrayList<>();
+        for (var constructor : constructors) {
+            if (constructor.getParameters().size() != args.size() || visited.contains(constructor)) continue;
+            Set<ConstructorDeclaration> next = new HashSet<>(visited); next.add(constructor);
+            Map<String, Expression> parameters = new HashMap<>();
+            for (int i = 0; i < args.size(); i++) parameters.put(constructor.getParameter(i).getNameAsString(), args.get(i));
+            for (var statement : constructor.getBody().getStatements()) {
+                if (statement instanceof ExplicitConstructorInvocationStmt delegation && delegation.isThis()) values.add(enumConstructorField(constructors, delegation.getArguments().stream().map(e -> substitute(e, parameters)).toList(), field, next));
+                if (statement instanceof ExpressionStmt expression && expression.getExpression() instanceof AssignExpr assignment && assignment.getTarget().toString().equals("this." + field) && assignment.getOperator() == AssignExpr.Operator.ASSIGN) values.add(substitute(assignment.getValue(), parameters));
             }
         }
-        if (parameter == null) throw new Unsupported("Cannot find enum ID constructor parameter");
-        int position = -1;
-        for (int i = 0; i < constructor.getParameters().size(); i++) if (constructor.getParameter(i).getNameAsString().equals(parameter)) position = i;
-        if (position < 0 || !constructor.getParameter(position).getTypeAsString().equals("int")) throw new Unsupported("Enum ID is not an integer parameter");
-        List<String> ids = new ArrayList<>();
-        for (var constant : ((EnumDeclaration) source.declaration()).getEntries()) ids.add(integer(constant.getArgument(position), source));
-        if (!ids.stream().map(Integer::parseInt).sorted().toList().equals(java.util.stream.IntStream.range(0, ids.size()).boxed().toList())) throw new Unsupported("Enum IDs are not continuous");
-        Model enumeration = model(source.name());
-        return new Wire(enumeration.generatedName(), "WireCodecs.enumIds(" + enumeration.generatedName() + ".values(), new int[]{" + String.join(", ", ids) + "}, WireCodecs.VAR_INT, WireCodecs.EnumFallback." + policy.substring(policy.lastIndexOf('.') + 1) + ")", "enum:" + source.name());
+        if (values.isEmpty() || values.stream().map(Object::toString).distinct().count() != 1) throw new Unsupported("Ambiguous enum constructor ID: " + field);
+        return values.getFirst();
     }
     private String enumIdField(Expression expression, SourceIndex.Source source) {
         if (expression instanceof MethodReferenceExpr reference && reference.getScope().toString().equals("Enum") && reference.getIdentifier().equals("ordinal")) return "$ordinal";
@@ -474,6 +525,17 @@ final class Analyzer {
             if (owner.equals("net.minecraft.world.phys.Vec3") && Set.of("STREAM_CODEC", "LP_STREAM_CODEC").contains(field)) return new Wire("org.stackanvil.packetforge.commons.Vector3", "VectorCodecs." + (field.equals("STREAM_CODEC") ? "DOUBLE" : "LOW_PRECISION"), field.equals("STREAM_CODEC") ? "VECTOR3" : "LP_VECTOR3");
             if (owner.equals("net.minecraft.world.level.ChunkPos") && field.equals("STREAM_CODEC")) return scalar("ChunkPos");
             if (owner.equals("net.minecraft.resources.ResourceKey") && field.equals("REGISTRY_STREAM_CODEC")) return scalar("Identifier");
+            if (owner.equals("net.minecraft.core.component.DataComponentType") && field.equals("STREAM_CODEC")) return new Wire("int", "WireCodecs.VAR_INT", "REGISTRY:Registries.DATA_COMPONENT_TYPE");
+            if (owner.equals("net.minecraft.core.component.TypedDataComponent") && field.equals("STREAM_CODEC")) return componentTable();
+            if (owner.equals("net.minecraft.core.component.DataComponentPatch") && Set.of("STREAM_CODEC", "DELIMITED_STREAM_CODEC").contains(field)) {
+                Wire table = componentTable();
+                String name = table.shape().substring("dispatch:".length());
+                return new Wire("org.stackanvil.packetforge.commons.ComponentPatch", "WireCodecs.lazy(() -> ComponentCodecs.patch(org.stackanvil.packetforge.protocol.GeneratedWireCodecs." + name + "_payloads(), " + field.equals("DELIMITED_STREAM_CODEC") + "))", "COMPONENT_PATCH:" + name);
+            }
+            if (owner.equals("net.minecraft.world.item.ItemStack") && Set.of("STREAM_CODEC", "OPTIONAL_STREAM_CODEC", "OPTIONAL_UNTRUSTED_STREAM_CODEC").contains(field)) {
+                Wire patch = codec(new FieldAccessExpr(new NameExpr("net.minecraft.core.component.DataComponentPatch"), field.equals("OPTIONAL_UNTRUSTED_STREAM_CODEC") ? "DELIMITED_STREAM_CODEC" : "STREAM_CODEC"), source);
+                return new Wire("org.stackanvil.packetforge.commons.ItemStack", "ComponentCodecs.itemStack(" + patch.codec() + ", " + !field.equals("STREAM_CODEC") + ")", "ITEM_STACK(" + field + ")<" + patch.shape() + ">");
+            }
             var target = index.source(owner);
             if (field.equals("STREAM_CODEC") && !(target.declaration() instanceof EnumDeclaration)) {
                 String alias = owner + "#stream-alias";
@@ -507,6 +569,7 @@ final class Analyzer {
                 if (method.equals("idMapper") && call.getArguments().size() == 1) return scalar("VarInt");
                 if (method.equals("idMapper") && call.getArguments().size() == 2) return source.declaration() instanceof EnumDeclaration ? enumIdMapper(call, source) : scalar("VarInt");
                 if (Set.of("registry", "holderRegistry").contains(method) && call.getArguments().size() == 1) return new Wire("int", "WireCodecs.VAR_INT", "REGISTRY:" + call.getArgument(0));
+                if (method.equals("holderSet") && call.getArguments().size() == 1) return new Wire("org.stackanvil.packetforge.commons.HolderSet", "WireCodecs.HOLDER_SET", "HOLDER_SET:" + call.getArgument(0));
                 if (method.equals("holder") && call.getArguments().size() == 2) {
                     Wire direct = codec(call.getArgument(1), source);
                     return new Wire("org.stackanvil.packetforge.commons.RegistryValue<" + boxed(direct.type()) + ">", "WireCodecs.registryValue(" + direct.codec() + ")", "holder(" + call.getArgument(0) + ")<" + direct.shape() + ">");
@@ -523,6 +586,12 @@ final class Analyzer {
                     return new Wire("org.stackanvil.packetforge.commons.Either<" + boxed(left.type()) + ", " + boxed(right.type()) + ">", "WireCodecs.either(" + left.codec() + ", " + right.codec() + ")", "either<" + left.shape() + "," + right.shape() + ">");
                 }
             }
+            if (method.equals("cast") && call.getArguments().isEmpty()) return codec(call.getScope().orElseThrow(), source);
+            if (owner.equals("StreamCodec") && method.equals("recursive") && call.getArguments().size() == 1 && call.getArgument(0) instanceof LambdaExpr lambda && lambda.getParameters().size() == 1 && lambda.getBody() instanceof ExpressionStmt statement) {
+                String generated = index.generated(source.name());
+                Wire reference = new Wire(generated, "WireCodecs.lazy(() -> " + generated + ".CODEC)", "model:" + source.name());
+                return codec(substitute(statement.getExpression(), Map.of(lambda.getParameter(0).getNameAsString(), bind(reference))), source);
+            }
             if (owner.equals("StreamCodec") && method.equals("unit") && call.getArguments().size() == 1) return new Wire("org.stackanvil.packetforge.commons.Unit", "WireCodecs.UNIT", "UNIT");
             if (method.equals("dispatch") && call.getArguments().size() == 2) return new DispatchAnalyzer(this).lower(call, source);
             if (owner.equals("StreamCodec") && method.equals("composite")) return compositeWire(call, source);
@@ -533,14 +602,14 @@ final class Analyzer {
                 if (decode.equals("Instant::ofEpochMilli") && encode.equals("Instant::toEpochMilli") && inner.shape().equals("LONG")) return new Wire("java.time.Instant", "WireCodecs.INSTANT", "INSTANT");
                 if (decode.equals("Short::intValue") && encode.equals("Integer::shortValue") && inner.shape().equals("SHORT")) return new Wire("int", "WireCodecs.mapped(WireCodecs.SHORT, Short::intValue, Integer::shortValue)", "SHORT_AS_INT");
                 if (decode.equals("ResourceKey::createRegistryKey") && encode.equals("ResourceKey::identifier") && inner.shape().equals("IDENTIFIER")) return inner;
-                if (call.getArgument(0) instanceof MethodReferenceExpr factory && factory.getIdentifier().equals("new")) {
+                if (call.getArgument(0) instanceof MethodReferenceExpr factory && factory.getIdentifier().equals("new")) try {
                     String targetName = index.resolve(factory.getScope().toString(), source);
                     var target = index.source(targetName); String field = getterField(call.getArgument(1), target);
                     Model projected = new Model(targetName, index.generated(targetName), List.of(new Field(field, declaredType(field, target), inner, inner)), List.of(), false, List.of(), null, factory.toString());
                     Model existing = models.get(targetName);
                     if (existing != null && !existing.fields().equals(projected.fields())) throw new Unsupported("Conflicting mapped wire projections for " + targetName);
                     models.putIfAbsent(targetName, projected); return modelWire(models.get(targetName));
-                }
+                } catch (Unsupported domainProjection) { }
                 // StreamCodec.map changes the domain representation, not the bytes of its base codec.
                 return new Wire(inner.type(), inner.codec(), inner.shape(), source.name() + "#map(" + decode + ", " + encode + ")");
             }
@@ -564,7 +633,17 @@ final class Analyzer {
         }
         throw new Unsupported("Unsupported stream codec: " + shortText(expression));
     }
+    private Wire componentTable() {
+        var source = index.source("net.minecraft.core.component.TypedDataComponent");
+        return new DispatchAnalyzer(this).lower(StaticJavaParser.parseExpression("ByteBufCodecs.registry(Registries.DATA_COMPONENT_TYPE).dispatch(TypedDataComponent::type, net.minecraft.core.component.DataComponentType::streamCodec)").asMethodCallExpr(), source);
+    }
     private Wire compositeWire(MethodCallExpr call, SourceIndex.Source source) {
+        call = call.clone();
+        for (int i = 0; i < call.getArguments().size(); i++) {
+            Expression argument = call.getArgument(i);
+            while (argument instanceof CastExpr || argument instanceof EnclosedExpr) argument = argument instanceof CastExpr cast ? cast.getExpression() : argument.asEnclosedExpr().getInner();
+            call.setArgument(i, argument);
+        }
         var arguments = call.getArguments();
         if (arguments.isEmpty() || arguments.size() % 2 != 1) throw new Unsupported("Invalid composite codec arity");
         Expression factory = arguments.get(arguments.size() - 1);
@@ -589,13 +668,48 @@ final class Analyzer {
         String generated;
         try { generated = index.generated(owner); }
         catch (Unsupported missingExternal) { generated = "org.stackanvil.packetforge.protocol.type.external." + owner; }
-        Model projection = new Model(owner, generated, List.copyOf(fields), List.of(), false, List.of(), null, factory.toString());
-        Model existing = models.get(owner);
+        String modelKey = owner;
+        try {
+            var declaration = index.source(owner).declaration();
+            boolean generic = declaration instanceof ClassOrInterfaceDeclaration c && !c.getTypeParameters().isEmpty() || declaration instanceof RecordDeclaration r && !r.getTypeParameters().isEmpty();
+            if (generic) { String suffix = Integer.toUnsignedString(fields.toString().hashCode()); modelKey += "#" + suffix; generated += "_" + suffix; }
+        } catch (Unsupported external) { }
+        Model projection = new Model(modelKey, generated, List.copyOf(fields), List.of(), false, recordGuards(owner, fields), null, factory.toString());
+        Model existing = models.get(modelKey);
         if (existing != null && !existing.fields().equals(projection.fields())) throw new Unsupported("Conflicting wire projections for " + owner);
-        models.putIfAbsent(owner, projection);
-        return modelWire(models.get(owner));
+        models.putIfAbsent(modelKey, projection);
+        return modelWire(models.get(modelKey));
+    }
+    private List<String> recordGuards(String name, List<Field> fields) {
+        try { return recordGuards(index.source(name), fields); } catch (Unsupported externalDomainType) { return List.of(); }
+    }
+    private List<String> recordGuards(SourceIndex.Source source, List<Field> fields) {
+        if (!(source.declaration() instanceof RecordDeclaration record)) return List.of();
+        Set<String> names = fields.stream().map(Field::name).collect(java.util.stream.Collectors.toSet());
+        List<String> guards = new ArrayList<>();
+        for (var member : record.getMembers()) if (member instanceof CompactConstructorDeclaration constructor) for (var statement : constructor.getBody().getStatements()) {
+            if (!(statement instanceof IfStmt guard) || guard.getElseStmt().isPresent()) continue;
+            Statement body = guard.getThenStmt();
+            if (body instanceof BlockStmt block && block.getStatements().size() == 1) body = block.getStatement(0);
+            if (!(body instanceof ThrowStmt thrown) || !(thrown.getExpression() instanceof ObjectCreationExpr exception) || !exception.getTypeAsString().equals("IllegalArgumentException")) continue;
+            if (guard.findAll(NameExpr.class).stream().anyMatch(n -> !names.contains(n.getNameAsString()))) continue;
+            if (guard.findAll(FieldAccessExpr.class).stream().anyMatch(f -> !(f.getScope() instanceof ThisExpr))) continue;
+            boolean unsafe = false;
+            for (var call : guard.findAll(MethodCallExpr.class)) {
+                if (!Set.of("size", "isEmpty").contains(call.getNameAsString()) || !call.getArguments().isEmpty() || !(call.getScope().orElse(null) instanceof NameExpr name)) { unsafe = true; break; }
+                var field = fields.stream().filter(f -> f.name().equals(name.getNameAsString())).findFirst().orElse(null);
+                if (field == null || !field.read().type().startsWith("java.util.")) { unsafe = true; break; }
+            }
+            if (!unsafe) guards.add(guard.toString());
+        }
+        return List.copyOf(guards);
     }
     private String integer(Expression expression, SourceIndex.Source source) {
+        if (expression instanceof EnclosedExpr enclosed) return integer(enclosed.getInner(), source);
+        if (expression instanceof BinaryExpr binary) {
+            int left = Integer.parseInt(integer(binary.getLeft(), source)), right = Integer.parseInt(integer(binary.getRight(), source));
+            return Integer.toString(switch (binary.getOperator()) { case BINARY_OR -> left | right; case BINARY_AND -> left & right; case XOR -> left ^ right; case LEFT_SHIFT -> left << right; case SIGNED_RIGHT_SHIFT -> left >> right; case UNSIGNED_RIGHT_SHIFT -> left >>> right; case PLUS -> left + right; case MINUS -> left - right; case MULTIPLY -> left * right; default -> throw new Unsupported("Unsupported integer operation: " + binary); });
+        }
         if (expression instanceof IntegerLiteralExpr literal) return Integer.toString(literal.asNumber().intValue());
         if (expression instanceof LongLiteralExpr literal) return Integer.toString(Math.toIntExact(literal.asNumber().longValue()));
         if (expression instanceof NameExpr name) {
@@ -604,6 +718,14 @@ final class Analyzer {
         }
         if (expression instanceof FieldAccessExpr access) {
             if (access.toString().equals("Integer.MAX_VALUE")) return "Integer.MAX_VALUE";
+            if (access.getScope() instanceof FieldAccessExpr constant) {
+                var owner = index.source(index.resolve(constant.getScope().toString(), source));
+                if (owner.declaration() instanceof EnumDeclaration enumeration) {
+                    var entry = enumeration.getEntries().stream().filter(e -> e.getNameAsString().equals(constant.getNameAsString())).findFirst().orElseThrow(() -> new Unsupported("Unknown enum constant: " + constant));
+                    var constructors = enumeration.getMembers().stream().filter(m -> m instanceof ConstructorDeclaration).map(m -> (ConstructorDeclaration) m).toList();
+                    return integer(enumConstructorField(constructors, entry.getArguments(), access.getNameAsString(), new HashSet<>()), owner);
+                }
+            }
             var owner = index.source(index.resolve(access.getScope().toString(), source));
             return integer(owner.declaration().getFieldByName(access.getNameAsString()).orElseThrow(() -> new Unsupported("Unresolved integer constant: " + expression)).getVariable(0).getInitializer().orElseThrow(), owner);
         }
@@ -624,7 +746,7 @@ final class Analyzer {
             if (source.declaration() instanceof RecordDeclaration record && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(name))) return name;
             var methods = source.declaration().getMethodsByName(name);
             if (methods.size() == 1 && methods.getFirst().getBody().isEmpty() && source.declaration() instanceof ClassOrInterfaceDeclaration clazz && clazz.isInterface()) return name;
-            if (methods.size() == 1 && methods.getFirst().getParameters().isEmpty()) {
+            if (methods.size() == 1 && methods.getFirst().getParameters().isEmpty() && methods.getFirst().getBody().isPresent()) {
                 var body = methods.getFirst().getBody().orElseThrow();
                 if (body.getStatements().size() == 1 && body.getStatement(0) instanceof ReturnStmt returned) return directField(returned.getExpression().orElseThrow());
             }

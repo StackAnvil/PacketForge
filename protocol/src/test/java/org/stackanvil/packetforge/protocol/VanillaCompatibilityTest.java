@@ -99,6 +99,8 @@ class VanillaCompatibilityTest {
                 }
             }
             auditDispatches(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
+            auditComponentPatches(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
+            auditRelatedValues(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
         }
     }
     @Test void registryKeepsTheCompleteCatalogueAndBundleOffset() {
@@ -120,17 +122,22 @@ class VanillaCompatibilityTest {
         for (var definition : models.entrySet()) {
             if (!definition.getKey().startsWith("$dispatch:")) continue;
             var dispatch = definition.getValue(); String name = dispatch.get("name").getAsString();
-            Object original = loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField("STREAM_CODEC").get(null);
+            Object original = loadOriginal(loader, dispatch.get("sourceOwner").getAsString()).getField(dispatch.get("sourceCodecField").getAsString()).get(null);
             @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) GeneratedWireCodecs.class.getField(name).get(null);
             var cases = dispatch.getAsJsonArray("cases"); String registryName = dispatch.get("registry").getAsString();
-            Object registry = registryName.isEmpty() ? null : loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField(registryName).get(null);
-            if (registry != null) assertEquals(cases.size(), registryType.getMethod("size").invoke(registry), registryName + " table size");
-            Class<?> keyType = (Class<?>) GeneratedRoundTripTest.type(dispatch.getAsJsonObject("key").get("type").getAsString());
+            String[] registryNames = registryName.isEmpty() ? new String[0] : registryName.split("\\|");
+            int registryCases = 0;
+            for (String registryField : registryNames) registryCases += (int) registryType.getMethod("size").invoke(loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField(registryField).get(null));
+            if (registryNames.length > 0) assertEquals(cases.size(), registryCases, registryName + " table size");
+            java.lang.reflect.Type keyType = GeneratedRoundTripTest.type(dispatch.getAsJsonObject("key").get("type").getAsString());
             for (var entry : cases) {
                 var branch = entry.getAsJsonObject(); String keyName = branch.get("key").getAsString();
-                Object key = keyType.isEnum() ? java.util.Arrays.stream(keyType.getEnumConstants()).filter(v -> ((Enum<?>) v).name().equals(keyName)).findFirst().orElseThrow() : Integer.parseInt(keyName);
-                if (registry != null) {
-                    Object value = registryType.getMethod("byId", int.class).invoke(registry, Integer.parseInt(keyName));
+                Object key = GeneratedRoundTripTest.dispatchKey(keyType, keyName);
+                if (registryNames.length > 0) {
+                    String registryField = registryNames.length == 1 ? registryNames[0] : registryNames[keyName.startsWith("left:") ? 0 : 1];
+                    Object registry = loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField(registryField).get(null);
+                    int id = Integer.parseInt(keyName.substring(keyName.indexOf(':') + 1));
+                    Object value = registryType.getMethod("byId", int.class).invoke(registry, id);
                     assertEquals(branch.get("name").getAsString(), registryType.getMethod("getKey", Object.class).invoke(registry, value).toString(), registryName + " ID " + keyName);
                 }
                 var schema = branch.getAsJsonObject("value");
@@ -165,6 +172,83 @@ class VanillaCompatibilityTest {
         }
         System.out.println("Verified " + compared + " dispatch payloads and every recovered registry ID against vanilla");
     }
+    private static void auditComponentPatches(ClassLoader loader, java.util.Map<String, com.google.gson.JsonObject> models, Object registries,
+            Class<?> byteBuf, Class<?> unpooled, Class<?> friendly, Class<?> registryAccess, Method decode, Method encode) throws Exception {
+        var definition = models.values().stream().filter(v -> v.has("registry") && v.get("registry").getAsString().equals("DATA_COMPONENT_TYPE")).findFirst().orElseThrow();
+        String name = definition.get("name").getAsString();
+        @SuppressWarnings("unchecked") var schemas = (java.util.Map<Integer, PacketCodec<?>>) GeneratedWireCodecs.class.getMethod(name + "_payloads").invoke(null);
+        int compared = 0;
+        for (boolean delimited : new boolean[]{false, true}) {
+            PacketCodec<ComponentPatch> codec = ComponentCodecs.patch(schemas, delimited);
+            Object source = loader.loadClass("net.minecraft.core.component.DataComponentPatch").getField(delimited ? "DELIMITED_STREAM_CODEC" : "STREAM_CODEC").get(null);
+            for (var entry : definition.getAsJsonArray("cases")) for (int variant = 0; variant < 3; variant++) {
+                var branch = entry.getAsJsonObject(); int id = branch.get("key").getAsInt(); var schema = branch.getAsJsonObject("value");
+                Object value = GeneratedRoundTripTest.sample(GeneratedRoundTripTest.type(schema.get("type").getAsString()), schema.get("shape").getAsString(), variant, models);
+                ComponentPatch patch = new ComponentPatch(java.util.Map.of(id, value), java.util.Set.of());
+                for (ComponentPatch sample : List.of(patch, new ComponentPatch(java.util.Map.of(), java.util.Set.of(id)))) {
+                    ByteBuf encoded = Unpooled.buffer(); byte[] expected;
+                    try { codec.encode(encoded, sample); expected = new byte[encoded.readableBytes()]; encoded.readBytes(expected); }
+                    finally { encoded.release(); }
+                    Object inputRaw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) expected), outputRaw = unpooled.getMethod("buffer").invoke(null);
+                    try {
+                        Object input = friendly.getConstructor(byteBuf, registryAccess).newInstance(inputRaw, registries), output = friendly.getConstructor(byteBuf, registryAccess).newInstance(outputRaw, registries);
+                        Object parsed = decode.invoke(source, input); assertEquals(0, byteBuf.getMethod("readableBytes").invoke(inputRaw)); encode.invoke(source, output, parsed);
+                        byte[] actual = new byte[(int) byteBuf.getMethod("readableBytes").invoke(outputRaw)]; byteBuf.getMethod("readBytes", byte[].class).invoke(outputRaw, (Object) actual);
+                        if (!java.util.Arrays.equals(expected, actual)) {
+                            ByteBuf left = Unpooled.wrappedBuffer(expected), right = Unpooled.wrappedBuffer(actual);
+                            try { assertTrue(sameValue(codec.decode(left), codec.decode(right)), "Component patch changed wire values"); assertFalse(left.isReadable()); assertFalse(right.isReadable()); }
+                            finally { left.release(); right.release(); }
+                        }
+                        compared++;
+                    } catch (Exception failure) { throw new AssertionError(branch.get("name") + " / delimited=" + delimited + " / " + variant, failure); }
+                    finally { byteBuf.getMethod("release").invoke(inputRaw); byteBuf.getMethod("release").invoke(outputRaw); }
+                }
+            }
+        }
+        System.out.println("Verified " + compared + " component patches against vanilla, including delimited payloads and removals");
+    }
+    private static void auditRelatedValues(ClassLoader loader, java.util.Map<String, com.google.gson.JsonObject> models, Object registries,
+            Class<?> byteBuf, Class<?> unpooled, Class<?> friendly, Class<?> registryAccess, Method decode, Method encode) throws Exception {
+        int compared = 0;
+        for (String original : List.of("net.minecraft.world.effect.MobEffectInstance", "net.minecraft.world.effect.MobEffectInstance.Details")) {
+            var model = models.values().stream().filter(m -> m.has("originalName") && m.get("originalName").getAsString().equals(original)).findFirst().orElseThrow();
+            Class<?> generated = Class.forName(model.get("generatedName").getAsString());
+            @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) generated.getField("CODEC").get(null);
+            var field = loadOriginal(loader, original).getDeclaredField("STREAM_CODEC"); field.setAccessible(true); Object source = field.get(null);
+            for (int variant = 0; variant < 3; variant++) {
+                ByteBuf encoded = Unpooled.buffer(); byte[] expected;
+                try { codec.encode(encoded, GeneratedRoundTripTest.sample(generated, "model:" + original, variant, models)); expected = new byte[encoded.readableBytes()]; encoded.readBytes(expected); }
+                finally { encoded.release(); }
+                Object inputRaw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) expected), outputRaw = unpooled.getMethod("buffer").invoke(null);
+                try {
+                    Object input = friendly.getConstructor(byteBuf, registryAccess).newInstance(inputRaw, registries), output = friendly.getConstructor(byteBuf, registryAccess).newInstance(outputRaw, registries);
+                    Object parsed = decode.invoke(source, input); assertEquals(0, byteBuf.getMethod("readableBytes").invoke(inputRaw)); encode.invoke(source, output, parsed);
+                    byte[] actual = new byte[(int) byteBuf.getMethod("readableBytes").invoke(outputRaw)]; byteBuf.getMethod("readBytes", byte[].class).invoke(outputRaw, (Object) actual);
+                    assertArrayEquals(expected, actual, original + " recursive variant " + variant); compared++;
+                } finally { byteBuf.getMethod("release").invoke(inputRaw); byteBuf.getMethod("release").invoke(outputRaw); }
+            }
+        }
+        var components = models.values().stream().filter(m -> m.has("registry") && m.get("registry").getAsString().equals("DATA_COMPONENT_TYPE")).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked") var schemas = (java.util.Map<Integer, PacketCodec<?>>) GeneratedWireCodecs.class.getMethod(components.get("name").getAsString() + "_payloads").invoke(null);
+        for (String original : List.of("net.minecraft.world.entity.animal.rabbit.Rabbit.Variant", "net.minecraft.world.entity.animal.fish.TropicalFish.Pattern")) {
+            var branch = java.util.stream.StreamSupport.stream(components.getAsJsonArray("cases").spliterator(), false).map(e -> e.getAsJsonObject()).filter(c -> c.getAsJsonObject("value").get("shape").getAsString().equals("enum:" + original)).findFirst().orElseThrow();
+            @SuppressWarnings("unchecked") PacketCodec<Object> generated = (PacketCodec<Object>) schemas.get(branch.get("key").getAsInt());
+            Class<?> valueType = (Class<?>) GeneratedRoundTripTest.type(branch.getAsJsonObject("value").get("type").getAsString());
+            Object source = loadOriginal(loader, original).getField("STREAM_CODEC").get(null);
+            List<byte[]> bodies = new ArrayList<>();
+            for (Object constant : valueType.getEnumConstants()) {
+                ByteBuf buffer = Unpooled.buffer(); try { generated.encode(buffer, constant); byte[] bytes = new byte[buffer.readableBytes()]; buffer.readBytes(bytes); bodies.add(bytes); } finally { buffer.release(); }
+            }
+            for (int unknown : new int[]{-1, 100000}) { ByteBuf buffer = Unpooled.buffer(); try { WireCodecs.VAR_INT.encode(buffer, unknown); byte[] bytes = new byte[buffer.readableBytes()]; buffer.readBytes(bytes); bodies.add(bytes); } finally { buffer.release(); } }
+            for (byte[] bytes : bodies) {
+                ByteBuf input = Unpooled.wrappedBuffer(bytes); Object expected; try { expected = generated.decode(input); assertFalse(input.isReadable()); } finally { input.release(); }
+                Object raw = unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) bytes);
+                try { Object parsed = decode.invoke(source, friendly.getConstructor(byteBuf, registryAccess).newInstance(raw, registries)); assertEquals(((Enum<?>) expected).name(), ((Enum<?>) parsed).name(), original); assertEquals(0, byteBuf.getMethod("readableBytes").invoke(raw)); compared++; }
+                finally { byteBuf.getMethod("release").invoke(raw); }
+            }
+        }
+        System.out.println("Verified " + compared + " recursive effect and sparse-enum values against vanilla");
+    }
     private static void assertSameWireValues(Class<?> packet, byte[] expected, byte[] actual, String name) throws Exception {
         @SuppressWarnings("unchecked") PacketCodec<Object> codec = (PacketCodec<Object>) packet.getField("CODEC").get(null);
         assertSameWireValues(codec, expected, actual, name);
@@ -172,7 +256,8 @@ class VanillaCompatibilityTest {
     private static void assertSameWireValues(PacketCodec<Object> codec, byte[] expected, byte[] actual, String name) throws Exception {
         ByteBuf left = Unpooled.wrappedBuffer(expected), right = Unpooled.wrappedBuffer(actual);
         try {
-            assertTrue(sameValue(codec.decode(left), codec.decode(right)), name + " changed decoded wire values");
+            Object before = codec.decode(left), after = codec.decode(right);
+            assertTrue(sameValue(before, after), name + " changed decoded wire values: " + before + " -> " + after);
             assertFalse(left.isReadable(), name); assertFalse(right.isReadable(), name);
         } finally { left.release(); right.release(); }
     }
@@ -199,6 +284,10 @@ class VanillaCompatibilityTest {
     private static Object worldRegistries(ClassLoader loader, Object builtIns, java.util.Map<String, com.google.gson.JsonObject> models) throws Exception {
         Object provider = loader.loadClass("net.minecraft.data.registries.VanillaRegistries").getMethod("createWorldLookup").invoke(null);
         Class<?> providerType = loader.loadClass("net.minecraft.core.HolderLookup$Provider");
+        Object initializers = loader.loadClass("net.minecraft.core.registries.BuiltInRegistries").getField("DATA_COMPONENT_INITIALIZERS").get(null);
+        Class<?> initializerType = loader.loadClass("net.minecraft.core.component.DataComponentInitializers");
+        Class<?> pendingType = loader.loadClass("net.minecraft.core.component.DataComponentInitializers$PendingComponents");
+        for (Object pending : (Iterable<?>) initializerType.getMethod("build", providerType).invoke(initializers, provider)) pendingType.getMethod("apply").invoke(pending);
         Class<?> lookupType = loader.loadClass("net.minecraft.core.HolderLookup");
         Class<?> resourceKey = loader.loadClass("net.minecraft.resources.ResourceKey");
         Class<?> holder = loader.loadClass("net.minecraft.core.Holder$Reference");

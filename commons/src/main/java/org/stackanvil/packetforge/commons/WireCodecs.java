@@ -53,6 +53,17 @@ public final class WireCodecs {
                 key.encode(b, value.type()); codec.encode(b, value.value());
             });
     }
+    public static final PacketCodec<HolderSet> HOLDER_SET = of(input -> {
+        int count = WireCodecs.VAR_INT.decode(input);
+        if (count == 0) return new HolderSet.Tag(WireCodecs.IDENTIFIER.decode(input));
+        if (count < 0 || count - 1 > input.readableBytes()) throw new IllegalArgumentException("Invalid holder set size");
+        List<Integer> ids = new ArrayList<>();
+        for (int i = 1; i < count; i++) { int id = WireCodecs.VAR_INT.decode(input); if (id < 0) throw new IllegalArgumentException("Negative holder ID"); ids.add(id); }
+        return new HolderSet.Direct(ids);
+    }, (output, value) -> {
+        if (value instanceof HolderSet.Tag tag) { WireCodecs.VAR_INT.encode(output, 0); WireCodecs.IDENTIFIER.encode(output, tag.name()); }
+        else if (value instanceof HolderSet.Direct direct) { WireCodecs.VAR_INT.encode(output, Math.addExact(direct.ids().size(), 1)); for (int id : direct.ids()) { if (id < 0) throw new IllegalArgumentException("Negative holder ID"); WireCodecs.VAR_INT.encode(output, id); } }
+    });
     public static final PacketCodec<Boolean> BOOL = of(ByteBuf::readBoolean, ByteBuf::writeBoolean);
     public static final PacketCodec<Byte> BYTE = of(ByteBuf::readByte, (b, v) -> b.writeByte(v));
     public static final PacketCodec<Integer> UNSIGNED_BYTE = of(b -> (int) b.readUnsignedByte(), ByteBuf::writeByte);
@@ -217,6 +228,11 @@ public final class WireCodecs {
             for (int i = 0; i < encoded.length; i++) if (encoded[i] == normalized) return constants[i];
             throw new IllegalArgumentException("Enum fallback requires continuous IDs");
         }, (b, v) -> wire.encode(b, encoded[v.ordinal()]));
+    }
+    public static <E extends Enum<E>> PacketCodec<E> enumIdsOrDefault(E[] values, int[] ids, PacketCodec<Integer> wire, E fallback) {
+        if (values.length != ids.length) throw new IllegalArgumentException("Enum ID count differs");
+        E[] constants = values.clone(); int[] encoded = ids.clone();
+        return of(input -> { int id = wire.decode(input); for (int i = 0; i < encoded.length; i++) if (encoded[i] == id) return constants[i]; return fallback; }, (output, value) -> wire.encode(output, encoded[value.ordinal()]));
     }
     private static int checkedLength(int size, int max) {
         if (size < 0 || size > max) throw new IllegalArgumentException("Invalid length: " + size + " (limit " + max + ")");

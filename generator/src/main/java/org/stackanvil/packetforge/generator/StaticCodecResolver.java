@@ -70,17 +70,49 @@ final class StaticCodecResolver {
         var constructor = constructors.getFirst(); Map<String, Value> variables = new HashMap<>(fields);
         for (int i = 0; i < arguments.size(); i++) variables.put(constructor.getParameter(i).getNameAsString(), arguments.get(i));
         for (var statement : constructor.getBody().getStatements()) {
-            if (statement instanceof ExplicitConstructorInvocationStmt invocation && invocation.isThis()) bindConstructor(owner, invocation.getArguments().stream().map(e -> new Value(e, owner, variables, List.of())).toList(), fields, visited);
+            if (statement instanceof ExplicitConstructorInvocationStmt invocation) {
+                SourceIndex.Source parent = owner;
+                if (!invocation.isThis()) {
+                    if (!(owner.declaration() instanceof ClassOrInterfaceDeclaration clazz) || clazz.getExtendedTypes().size() != 1) throw new Unsupported("Unknown codec superclass constructor");
+                    parent = analyzer.index.source(analyzer.index.resolve(clazz.getExtendedTypes().get(0).getNameWithScope(), owner));
+                }
+                bindConstructor(parent, invocation.getArguments().stream().map(e -> new Value(e, owner, variables, List.of())).toList(), fields, visited);
+            }
             if (statement instanceof ExpressionStmt expression && expression.getExpression() instanceof AssignExpr assignment && assignment.getTarget() instanceof FieldAccessExpr target && target.getScope() instanceof ThisExpr) fields.put("$field:" + target.getNameAsString(), new Value(assignment.getValue(), owner, new HashMap<>(variables), List.of()));
         }
     }
     Value accessor(Value receiver, String method) {
+        Value target = resolve(receiver);
+        if (method.equals("streamCodec") && target.expression() instanceof MethodCallExpr build && build.getNameAsString().equals("build") && build.getArguments().isEmpty()) return componentCodec(target.child(build.getScope().orElseThrow()));
         Value object = object(receiver);
         if (object.source().declaration() instanceof RecordDeclaration record && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(method))) return member(receiver, method);
         var methods = object.locals().stream().filter(m -> m instanceof MethodDeclaration d && d.getNameAsString().equals(method)).map(m -> (MethodDeclaration) m).toList();
         if (methods.isEmpty()) methods = object.source().declaration().getMethodsByName(method).stream().filter(m -> m.getParameters().isEmpty()).toList();
+        SourceIndex.Source methodOwner = object.source();
+        while (methods.isEmpty() && methodOwner.declaration() instanceof ClassOrInterfaceDeclaration clazz && clazz.getExtendedTypes().size() == 1) {
+            methodOwner = analyzer.index.source(analyzer.index.resolve(clazz.getExtendedTypes().get(0).getNameWithScope(), methodOwner));
+            methods = methodOwner.declaration().getMethodsByName(method).stream().filter(m -> m.getParameters().isEmpty()).toList();
+        }
         if (methods.size() != 1) throw new Unsupported("Ambiguous codec accessor: " + method);
-        return returned(methods.getFirst(), object.source(), object.variables(), object.locals(), List.of());
+        return returned(methods.getFirst(), methodOwner, object.variables(), object.locals(), List.of());
+    }
+    private Value componentCodec(Value value) {
+        Value target = resolve(value);
+        if (target.expression() instanceof MethodCallExpr apply && apply.getNameAsString().equals("apply") && apply.getArguments().size() == 1 && apply.getScope().isPresent()) return componentCodec(invoke(target.child(apply.getScope().get()), List.of(target.child(apply.getArgument(0)))));
+        Value network = null, persistent = null;
+        while (target.expression() instanceof MethodCallExpr call) {
+            String method = call.getNameAsString();
+            if (method.equals("networkSynchronized") && call.getArguments().size() == 1) { if (network == null) network = target.child(call.getArgument(0)); }
+            else if (method.equals("persistent") && call.getArguments().size() == 1) { if (persistent == null) persistent = target.child(call.getArgument(0)); }
+            else if (Set.of("cacheEncoding", "ignoreSwapAnimation").contains(method) && call.getArguments().isEmpty()) { }
+            else if (method.equals("builder") && call.getScope().map(Object::toString).orElse("").equals("DataComponentType")) {
+                if (network != null) return network;
+                if (persistent != null) return persistent.child(new MethodCallExpr(new NameExpr("ByteBufCodecs"), "fromCodecWithRegistries").addArgument(persistent.expression().clone()));
+                throw new Unsupported("Component has no persistent or network codec");
+            } else throw new Unsupported("Unknown component builder operation: " + method);
+            target = resolve(target.child(call.getScope().orElseThrow()));
+        }
+        throw new Unsupported("Component builder is not statically bound");
     }
     Value invoke(Value function, List<Value> arguments) {
         Value target = resolve(function);
@@ -160,7 +192,11 @@ final class StaticCodecResolver {
         if (!(expression instanceof MethodCallExpr call)) return analyzer.codec(expression, value.source());
         String scope = call.getScope().map(Object::toString).orElse(""), method = call.getNameAsString();
         if (scope.equals("Objects") && method.equals("requireNonNull") && call.getArguments().size() == 1) return codec(value.child(call.getArgument(0)));
-        if (method.equals("apply") && call.getScope().isPresent() && call.getScope().get() instanceof NameExpr variable && value.variables().containsKey(variable.getNameAsString())) return codec(invoke(value.variables().get(variable.getNameAsString()), call.getArguments().stream().map(value::child).toList()));
+        if (method.equals("apply") && call.getScope().isPresent() && call.getScope().get() instanceof NameExpr variable && value.variables().containsKey(variable.getNameAsString())) {
+            Value receiver = value.variables().get(variable.getNameAsString());
+            try { receiver = resolve(receiver); } catch (Unsupported nativeCodec) { }
+            if (receiver.expression() instanceof LambdaExpr || receiver.expression() instanceof MethodReferenceExpr) return codec(invoke(receiver, call.getArguments().stream().map(value::child).toList()));
+        }
         MethodCallExpr translated = call.clone();
         if (Set.of("map", "apply", "dispatch").contains(method) && call.getScope().isPresent()) translated.setScope(analyzer.bind(codec(value.child(call.getScope().get()))));
         boolean nativeBuffer = scope.equals("ByteBufCodecs") || scope.equals("net.minecraft.network.codec.ByteBufCodecs");

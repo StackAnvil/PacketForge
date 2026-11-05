@@ -38,6 +38,13 @@ class GeneratedRoundTripTest {
             } finally { buffer.release(); reencoded.release(); }
         }
     }
+    @Test void retainsStandaloneRecordValidationGuards() {
+        var codec = org.stackanvil.packetforge.protocol.type.world.item.enchantment.Enchantable.CODEC;
+        ByteBuf invalid = Unpooled.wrappedBuffer(new byte[]{0});
+        try { assertThrows(IllegalArgumentException.class, () -> codec.decode(invalid)); }
+        finally { invalid.release(); }
+        assertThrows(IllegalArgumentException.class, () -> new org.stackanvil.packetforge.protocol.type.world.item.enchantment.Enchantable(0));
+    }
     static Map<String, JsonObject> models() throws Exception {
         Map<String, JsonObject> models = new HashMap<>();
         try (var stream = GeneratedProtocol.class.getResourceAsStream("/packetforge/protocol.json")) {
@@ -70,6 +77,14 @@ class GeneratedRoundTripTest {
             default -> Class.forName(name);
         };
     }
+    static Object dispatchKey(Type type, String name) {
+        if (type instanceof ParameterizedType generic && generic.getRawType() == Either.class) {
+            int id = Integer.parseInt(name.substring(name.indexOf(':') + 1));
+            return name.startsWith("left:") ? Either.left(id) : Either.right(id);
+        }
+        Class<?> clazz = (Class<?>) type;
+        return clazz.isEnum() ? java.util.Arrays.stream(clazz.getEnumConstants()).filter(v -> ((Enum<?>) v).name().equals(name)).findFirst().orElseThrow() : Integer.parseInt(name);
+    }
     private static final class Keys {
         static final java.security.PublicKey PUBLIC;
         static {
@@ -87,7 +102,14 @@ class GeneratedRoundTripTest {
         }
         result.add(content.substring(start)); return result;
     }
+    private static final ThreadLocal<java.util.List<String>> SAMPLE_TYPES = ThreadLocal.withInitial(java.util.ArrayList::new);
     static Object sample(Type type, String shape, int variant, Map<String, JsonObject> models) throws Exception {
+        var path = SAMPLE_TYPES.get(); String identity = type + "#" + shape;
+        int boundedVariant = path.contains(identity) ? 0 : variant; path.add(identity);
+        try { return sampleValue(type, shape, boundedVariant, models); }
+        finally { path.removeLast(); }
+    }
+    private static Object sampleValue(Type type, String shape, int variant, Map<String, JsonObject> models) throws Exception {
         if (shape.startsWith("length(")) shape = shape.substring(shape.indexOf('<') + 1, shape.length() - 1);
         if (shape.startsWith("nullable<")) {
             if (variant == 0) return null;
@@ -110,8 +132,8 @@ class GeneratedRoundTripTest {
                 var cases = new java.util.ArrayList<com.google.gson.JsonObject>();
                 for (var candidate : dispatch.getAsJsonArray("cases")) if (!candidate.getAsJsonObject().getAsJsonObject("value").get("shape").getAsString().startsWith("REJECTED:")) cases.add(candidate.getAsJsonObject());
                 var branch = cases.get(variant % cases.size());
-                Class<?> keyType = (Class<?>) arguments[0]; String keyName = branch.get("key").getAsString();
-                Object key = keyType.isEnum() ? java.util.Arrays.stream(keyType.getEnumConstants()).filter(v -> ((Enum<?>) v).name().equals(keyName)).findFirst().orElseThrow() : Integer.parseInt(keyName);
+                String keyName = branch.get("key").getAsString();
+                Object key = dispatchKey(arguments[0], keyName);
                 var value = branch.getAsJsonObject("value");
                 return new Variant<>(key, sample(type(value.get("type").getAsString()), value.get("shape").getAsString(), variant, models));
             }
@@ -120,8 +142,18 @@ class GeneratedRoundTripTest {
             throw new IllegalArgumentException("Unrecognized generic type: " + type);
         }
         Class<?> clazz = (Class<?>) type;
+        if (clazz == HolderSet.class) return new HolderSet.Direct(variant == 0 ? List.of() : List.of(1));
+        if (clazz == ComponentPatch.class) return variant == 0 ? ComponentPatch.EMPTY : new ComponentPatch(Map.of(1, 12 + variant), Set.of());
+        if (clazz == ItemStack.class) return variant == 0 && shape.contains("OPTIONAL_") ? ItemStack.EMPTY : new ItemStack(1 + variant, 1, (ComponentPatch) sample(ComponentPatch.class, "", variant, models));
         if (clazz == ProfileProperty.class) return new ProfileProperty("property" + variant, "sample" + variant, variant == 0 ? null : "signature");
         if (clazz == java.security.PublicKey.class) return Keys.PUBLIC;
+        if (clazz == NbtTag.class && shape.contains("TypeBase#CustomDataPredicate.CODEC")) return new NbtTag.StringValue("{}");
+        if (clazz == NbtTag.class && shape.contains("TypeBase#")) return shape.contains("EnchantmentsPredicate.") || shape.endsWith("VillagerTypePredicate.CODEC") ? new NbtTag.ListValue((byte) 0, List.of()) : new NbtTag.Compound(Map.of());
+        if (clazz == NbtTag.class && shape.contains("DataComponents#")) {
+            if (shape.endsWith("Recipe.KEY_CODEC.listOf()")) return new NbtTag.ListValue((byte) 8, List.of(new NbtTag.StringValue("minecraft:sample")));
+            if (shape.endsWith("SeededContainerLoot.CODEC")) return new NbtTag.Compound(Map.of("loot_table", new NbtTag.StringValue("minecraft:empty")));
+            return new NbtTag.Compound(Map.of());
+        }
         if (clazz == NbtTag.class && shape.contains("net.minecraft.network.chat.Style.Serializer#")) return new NbtTag.Compound(variant == 0 ? Map.of() : Map.of("bold", new NbtTag.ByteValue((byte) (variant % 2))));
         if (clazz == NbtTag.class && shape.contains("net.minecraft.server.dialog.Dialog#")) return new NbtTag.Compound(new java.util.HashMap<>(Map.of("type", new NbtTag.StringValue("minecraft:notice"), "title", new NbtTag.StringValue("sample" + variant))));
         if (clazz == NbtTag.class) return new NbtTag.StringValue(variant == 0 ? "" : "sample" + variant);
@@ -169,8 +201,17 @@ class GeneratedRoundTripTest {
                 String original = model.get("originalName").getAsString();
                 boolean nonempty = original.equals("net.minecraft.world.level.pathfinder.Path.DebugData") && components[i].getName().equals("targetNodes")
                         || original.equals("net.minecraft.world.entity.PositionPath.Stepped") && components[i].getName().equals("steps");
-                int fieldVariant = nonempty ? Math.max(1, variant) : variant;
-                values[i] = sample(components[i].getGenericType(), fields.get(i).getAsJsonObject().getAsJsonObject("read").get("shape").getAsString(), fieldVariant, models);
+                int fieldVariant = original.equals("net.minecraft.world.level.block.entity.SignText") && components[i].getName().equals("filteredMessagesForSerialization") && variant != 0 ? variant + 1 : original.equals("net.minecraft.world.item.enchantment.Enchantable") ? variant + 1 : original.startsWith("net.minecraft.core.particles.") && components[i].getName().equals("scale") ? variant + 1 : nonempty ? Math.max(1, variant) : variant;
+                values[i] = original.equals("net.minecraft.world.effect.MobEffectInstance.Details") && components[i].getName().equals("hiddenEffect") && SAMPLE_TYPES.get().stream().anyMatch(t -> t.contains(".PotionContents#")) ? Optional.empty()
+                        : original.equals("net.minecraft.world.item.ItemStackTemplate") && components[i].getName().equals("item") ? 1
+                        : original.equals("net.minecraft.world.item.ItemStackTemplate") && components[i].getName().equals("count") ? variant + 1
+                        : sample(components[i].getGenericType(), fields.get(i).getAsJsonObject().getAsJsonObject("read").get("shape").getAsString(), fieldVariant, models);
+            }
+            if (model.get("originalName").getAsString().equals("net.minecraft.world.item.crafting.display.ShapedCraftingRecipeDisplay")) {
+                values[0] = variant + 1; values[1] = 1;
+                @SuppressWarnings("unchecked") List<Object> ingredients = (List<Object>) values[2];
+                Object ingredient = ingredients.isEmpty() ? sample(((ParameterizedType) components[2].getGenericType()).getActualTypeArguments()[0], innerShapes(fields.get(2).getAsJsonObject().getAsJsonObject("read").get("shape").getAsString()).getFirst(), 0, models) : ingredients.getFirst();
+                values[2] = java.util.Collections.nCopies(variant + 1, ingredient);
             }
             return clazz.getConstructor(parameters).newInstance(values);
         }
