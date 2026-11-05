@@ -1,6 +1,7 @@
 package org.stackanvil.packetforge.generator;
 
 import com.github.javaparser.ast.Node;
+import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.stmt.*;
@@ -14,7 +15,9 @@ import static org.stackanvil.packetforge.generator.SourceIndex.Unsupported;
 final class Analyzer {
     record Wire(String type, String codec, String shape) {}
     record Field(String name, String originalType, Wire read, Wire write) {}
-    record Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet) {}
+    record Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet, List<String> validations) {
+        Model(String originalName, String generatedName, List<Field> fields, List<String> constants, boolean packet) { this(originalName, generatedName, fields, constants, packet, List.of()); }
+    }
     record Registration(String state, String flow, int id, String name, String originalClass, String codecExpression,
                         String source, int line, boolean supported, String reason, String generatedClass) {}
     private record Decoded(String name, Expression value) {}
@@ -23,6 +26,8 @@ final class Analyzer {
         Map.entry("Short", "SHORT:short"), Map.entry("UnsignedShort", "UNSIGNED_SHORT:int"), Map.entry("Int", "INT:int"),
         Map.entry("Long", "LONG:long"), Map.entry("Float", "FLOAT:float"), Map.entry("Double", "DOUBLE:double"),
         Map.entry("VarInt", "VAR_INT:int"), Map.entry("ContainerId", "VAR_INT:int"), Map.entry("VarLong", "VAR_LONG:long"),
+        Map.entry("LongArray", "LONG_ARRAY:long[]"), Map.entry("VarIntArray", "VAR_INT_ARRAY:int[]"),
+        Map.entry("ChunkPos", "CHUNK_POSITION:org.stackanvil.packetforge.commons.ChunkPosition"),
         Map.entry("UUID", "UUID_CODEC:java.util.UUID"), Map.entry("Identifier", "IDENTIFIER:String"), Map.entry("BlockPos", "BLOCK_POSITION:org.stackanvil.packetforge.commons.BlockPosition"));
     private static final Map<String, String> CODEC_SCALARS = Map.ofEntries(
         Map.entry("BOOL", "Boolean"), Map.entry("BYTE", "Byte"), Map.entry("SHORT", "Short"), Map.entry("UNSIGNED_SHORT", "UnsignedShort"),
@@ -33,6 +38,7 @@ final class Analyzer {
     final Map<String, Model> models = new TreeMap<>();
     private final Map<String, String> failures = new HashMap<>();
     private final Set<String> active = new HashSet<>();
+    private final Map<String, List<String>> validations = new HashMap<>();
     Analyzer(Path sources) { root = sources; index = new SourceIndex(sources); }
 
     List<Registration> analyze() throws IOException {
@@ -122,7 +128,8 @@ final class Analyzer {
             boolean packet = declaration instanceof RecordDeclaration record ? record.getImplementedTypes().stream().anyMatch(t -> t.getNameAsString().equals("Packet"))
                 : declaration instanceof ClassOrInterfaceDeclaration clazz && clazz.getImplementedTypes().stream().anyMatch(t -> t.getNameAsString().equals("Packet"));
             if (declaration instanceof ClassOrInterfaceDeclaration clazz && !clazz.getExtendedTypes().isEmpty()) throw new Unsupported("Inherited packet/value layout: " + name);
-            Expression codec = declaration.getFieldByName("STREAM_CODEC").orElseThrow(() -> new Unsupported("Missing STREAM_CODEC: " + name)).getVariable(0).getInitializer().orElseThrow();
+            Expression codec = declaration.getFieldByName("STREAM_CODEC").map(f -> f.getVariable(0).getInitializer().orElseThrow())
+                .orElseGet(() -> StaticJavaParser.parseExpression("Packet.codec(" + declaration.getNameAsString() + "::write, " + declaration.getNameAsString() + "::new)"));
             List<Field> fields;
             if (codec instanceof MethodCallExpr call && call.getScope().map(Object::toString).orElse("").equals("StreamCodec") && call.getNameAsString().equals("unit")) {
                 fields = List.of();
@@ -130,25 +137,37 @@ final class Analyzer {
                 fields = composite(call, source);
             } else if (codec instanceof MethodCallExpr call && Set.of("Packet", "StreamCodec").contains(call.getScope().map(Object::toString).orElse("")) && Set.of("codec", "ofMember").contains(call.getNameAsString())) {
                 fields = memberCodec(call, source);
+            } else if (codec instanceof MethodCallExpr call && call.getNameAsString().equals("map") && call.getArguments().size() == 2 && call.getArgument(0) instanceof MethodReferenceExpr constructor && constructor.getIdentifier().equals("new") && index.resolve(constructor.getScope().toString(), source).equals(name)) {
+                String field = getterField(call.getArgument(1), source);
+                Wire underlying = codec(call.getScope().orElseThrow(), source);
+                fields = List.of(new Field(field, declaredType(field, source), underlying, underlying));
+            } else if (codec instanceof NameExpr || codec instanceof FieldAccessExpr) {
+                Wire underlying = codec(codec, source);
+                if (underlying.shape().startsWith("model:")) fields = models.get(underlying.shape().substring(6)).fields();
+                else throw new Unsupported("Codec alias does not construct this value");
             } else { throw new Unsupported("Unsupported codec declaration: " + shortText(codec)); }
-            Model model = new Model(name, index.generated(name), fields, List.of(), packet);
+            Model model = new Model(name, index.generated(name), fields, List.of(), packet, validations.getOrDefault(name, List.of()));
             models.put(name, model); return model;
         } catch (Unsupported e) { failures.put(name, e.getMessage()); throw e; }
         finally { active.remove(name); }
     }
     private List<Field> composite(MethodCallExpr call, SourceIndex.Source source) {
         var args = call.getArguments();
-        if (args.isEmpty() || args.size() % 2 != 1 || !(args.get(args.size() - 1) instanceof MethodReferenceExpr constructor) || !constructor.getIdentifier().equals("new") || !index.resolve(constructor.getScope().toString(), source).equals(source.name())) throw new Unsupported("Composite does not end in its constructor");
+        if (args.isEmpty() || args.size() % 2 != 1 || !(args.get(args.size() - 1) instanceof MethodReferenceExpr constructor) || !index.resolve(constructor.getScope().toString(), source).equals(source.name())) throw new Unsupported("Composite does not end in its constructor or factory");
+        if (!constructor.getIdentifier().equals("new")) {
+            var factories = source.declaration().getMethodsByName(constructor.getIdentifier());
+            if (factories.size() != 1 || !factories.getFirst().isStatic() || factories.getFirst().getBody().isEmpty()) throw new Unsupported("Unknown composite factory");
+            var body = factories.getFirst().getBody().get();
+            if (body.getStatements().size() != 1 || !(body.getStatement(0) instanceof ReturnStmt returned) || !(returned.getExpression().orElse(null) instanceof ObjectCreationExpr created) || !created.getArguments().stream().map(Object::toString).toList().equals(factories.getFirst().getParameters().stream().map(p -> p.getNameAsString()).toList())) throw new Unsupported("Composite factory transforms its arguments");
+        }
         List<Field> fields = new ArrayList<>();
         for (int i = 0; i < args.size() - 1; i += 2) {
-            if (!(args.get(i + 1) instanceof MethodReferenceExpr getter) || !index.resolve(getter.getScope().toString(), source).equals(source.name())) throw new Unsupported("Composite getter is not a direct member reference");
-            String name = getter.getIdentifier();
+            String name = getterField(args.get(i + 1), source);
             String fieldType = declaredType(name, source);
             Wire wire = codec(args.get(i), source);
             fields.add(new Field(name, fieldType, wire, wire));
         }
         if (source.declaration() instanceof RecordDeclaration record && !record.getParameters().stream().map(p -> p.getNameAsString()).toList().equals(fields.stream().map(Field::name).toList())) throw new Unsupported("Composite getter order differs from record constructor");
-        if (!(source.declaration() instanceof RecordDeclaration)) throw new Unsupported("Composite value is not a record");
         return fields;
     }
     private List<Field> memberCodec(MethodCallExpr call, SourceIndex.Source source) {
@@ -159,7 +178,16 @@ final class Analyzer {
         var constructor = constructors.getFirst();
         String input = constructor.getParameter(0).getNameAsString();
         List<Decoded> decoded = new ArrayList<>();
-        var statements = constructor.getBody().getStatements();
+        var statements = new ArrayList<>(constructor.getBody().getStatements());
+        List<String> guards = new ArrayList<>();
+        while (!statements.isEmpty() && statements.getLast() instanceof IfStmt guard && guard.getElseStmt().isEmpty()) {
+            var thrown = guard.getThenStmt().isBlockStmt() && guard.getThenStmt().asBlockStmt().getStatements().size() == 1 ? guard.getThenStmt().asBlockStmt().getStatement(0) : guard.getThenStmt();
+            if (!(thrown instanceof ThrowStmt throwing) || !(throwing.getExpression() instanceof ObjectCreationExpr creation) || !creation.getTypeAsString().equals("IllegalArgumentException") || !guard.findAll(MethodCallExpr.class).isEmpty()) break;
+            IfStmt copy = guard.clone();
+            for (var access : new ArrayList<>(copy.findAll(FieldAccessExpr.class))) if (access.getScope() instanceof ThisExpr) access.replace(new NameExpr(access.getNameAsString()));
+            guards.addFirst(copy.toString()); statements.removeLast();
+        }
+        validations.put(source.name(), List.copyOf(guards));
         if (statements.size() == 1 && statements.get(0) instanceof ExplicitConstructorInvocationStmt invocation && invocation.isThis() && source.declaration() instanceof RecordDeclaration record) {
             if (invocation.getArguments().size() != record.getParameters().size()) throw new Unsupported("Record constructor arity mismatch");
             for (int i = 0; i < record.getParameters().size(); i++) decoded.add(new Decoded(record.getParameter(i).getNameAsString(), invocation.getArgument(i)));
@@ -194,6 +222,7 @@ final class Analyzer {
             if (cast.getType().isPrimitiveType()) throw new Unsupported("Numeric cast changes wire value: " + shortText(expression));
             return read(cast.getExpression(), buffer, source);
         }
+        if (expression instanceof ObjectCreationExpr creation && creation.getArguments().size() == 1 && creation.getArgument(0).toString().equals(buffer)) return modelWire(model(index.resolve(creation.getTypeAsString(), source)));
         if (!(expression instanceof MethodCallExpr call) || call.getScope().isEmpty()) throw new Unsupported("Unsupported read expression: " + shortText(expression));
         if (call.getNameAsString().equals("decode") && call.getArguments().size() == 1 && call.getArgument(0).toString().equals(buffer)) return codec(call.getScope().get(), source);
         if (!call.getScope().get().toString().equals(buffer) && call.getArguments().size() == 1 && call.getArgument(0) instanceof MethodCallExpr nested && nested.getScope().map(Object::toString).orElse("").equals(buffer)) {
@@ -217,6 +246,7 @@ final class Analyzer {
     }
     private Wire write(MethodCallExpr call, String buffer, String field, Wire read, SourceIndex.Source source) {
         if (call.getScope().isEmpty()) throw new Unsupported("Unscoped write");
+        if (call.getNameAsString().equals("write") && call.getArguments().size() == 1 && call.getArgument(0).toString().equals(buffer) && directField(call.getScope().get()).equals(field) && read.shape().startsWith("model:")) return read;
         if (call.getNameAsString().equals("encode") && call.getArguments().size() == 2 && call.getArgument(0).toString().equals(buffer) && directField(call.getArgument(1)).equals(field)) return codec(call.getScope().get(), source);
         if (read.shape().startsWith("enumSwitch:") && call.getScope().get().toString().equals(buffer) && call.getArguments().size() == 1 && call.getArgument(0) instanceof MethodCallExpr accessor && accessor.getArguments().isEmpty() && accessor.getScope().isPresent() && directField(accessor.getScope().get()).equals(field)) {
             String[] parts = read.shape().split(":");
@@ -326,10 +356,12 @@ final class Analyzer {
         return expression;
     }
     private Wire readerFunction(Expression expression, SourceIndex.Source source) {
+        if (expression instanceof MethodReferenceExpr reference && reference.getIdentifier().equals("new")) return modelWire(model(index.resolve(reference.getScope().toString(), source)));
         if (expression instanceof MethodReferenceExpr reference && reference.getScope().toString().equals("FriendlyByteBuf") && reference.getIdentifier().startsWith("read")) return read(new MethodCallExpr(new NameExpr("input"), reference.getIdentifier()), "input", source);
         return codec(expression, source);
     }
     private Wire writerFunction(Expression expression, SourceIndex.Source source) {
+        if (expression instanceof MethodReferenceExpr reference && reference.getIdentifier().equals("write") && !reference.getScope().toString().equals("FriendlyByteBuf")) return modelWire(model(index.resolve(reference.getScope().toString(), source)));
         if (expression instanceof MethodReferenceExpr reference && reference.getScope().toString().equals("FriendlyByteBuf") && reference.getIdentifier().startsWith("write")) {
             String operation = reference.getIdentifier().substring(5);
             if (SCALARS.containsKey(operation)) return scalar(operation);
@@ -343,12 +375,20 @@ final class Analyzer {
             String field = access.getNameAsString();
             if (owner.equals("net.minecraft.network.codec.ByteBufCodecs")) {
                 if (CODEC_SCALARS.containsKey(field)) return scalar(CODEC_SCALARS.get(field));
+                if (field.equals("OPTIONAL_VAR_INT")) return new Wire("java.util.OptionalInt", "WireCodecs.OPTIONAL_VAR_INT", "OPTIONAL_VAR_INT");
+                if (field.equals("ROTATION_BYTE")) return new Wire("float", "VectorCodecs.ROTATION_BYTE", "ROTATION_BYTE");
+                if (field.equals("VECTOR3F")) return new Wire("org.stackanvil.packetforge.commons.FloatVector3", "VectorCodecs.FLOAT", "VECTOR3F");
+                if (field.equals("QUATERNIONF")) return new Wire("org.stackanvil.packetforge.commons.Quaternion", "VectorCodecs.QUATERNION", "QUATERNIONF");
+                if (field.equals("BIT_SET")) return new Wire("java.util.BitSet", "WireCodecs.BIT_SET", "BIT_SET");
                 if (field.equals("STRING_UTF8")) return string("32767");
                 if (field.equals("BYTE_ARRAY")) return new Wire("byte[]", "WireCodecs.byteArray(Integer.MAX_VALUE)", "byteArray");
             }
             if (owner.equals("net.minecraft.resources.Identifier") && field.equals("STREAM_CODEC")) return scalar("Identifier");
             if (owner.equals("net.minecraft.core.UUIDUtil") && field.equals("STREAM_CODEC")) return scalar("UUID");
             if (owner.equals("net.minecraft.core.BlockPos") && field.equals("STREAM_CODEC")) return scalar("BlockPos");
+            if (owner.equals("net.minecraft.world.phys.Vec3") && Set.of("STREAM_CODEC", "LP_STREAM_CODEC").contains(field)) return new Wire("org.stackanvil.packetforge.commons.Vector3", "VectorCodecs." + (field.equals("STREAM_CODEC") ? "DOUBLE" : "LOW_PRECISION"), field.equals("STREAM_CODEC") ? "VECTOR3" : "LP_VECTOR3");
+            if (owner.equals("net.minecraft.world.level.ChunkPos") && field.equals("STREAM_CODEC")) return scalar("ChunkPos");
+            if (owner.equals("net.minecraft.resources.ResourceKey") && field.equals("REGISTRY_STREAM_CODEC")) return scalar("Identifier");
             var target = index.source(owner);
             if (field.equals("STREAM_CODEC") && !(target.declaration() instanceof EnumDeclaration)) {
                 Model nested = model(owner);
@@ -364,16 +404,40 @@ final class Analyzer {
             String owner = call.getScope().get().toString();
             String method = call.getNameAsString();
             if (owner.equals("ByteBufCodecs")) {
+                if (method.equals("idMapper") && call.getArguments().size() == 1) return scalar("VarInt");
                 if (method.equals("idMapper") && call.getArguments().size() == 2) return source.declaration() instanceof EnumDeclaration ? enumIdMapper(call, source) : scalar("VarInt");
                 if (method.equals("registry") && call.getArguments().size() == 1) return scalar("VarInt");
                 if (method.equals("stringUtf8") && call.getArguments().size() == 1) return string(integer(call.getArgument(0), source));
                 if (method.equals("byteArray") && call.getArguments().size() == 1) return new Wire("byte[]", "WireCodecs.byteArray(" + integer(call.getArgument(0), source) + ")", "byteArray");
                 if (method.equals("optional") && call.getArguments().size() == 1) return container("optional", codec(call.getArgument(0), source), "Integer.MAX_VALUE");
+                if (method.equals("map") && (call.getArguments().size() == 3 || call.getArguments().size() == 4)) {
+                    Wire key = codec(call.getArgument(1), source), value = codec(call.getArgument(2), source);
+                    return new Wire("java.util.Map<" + boxed(key.type()) + ", " + boxed(value.type()) + ">", "WireCodecs.map(" + key.codec() + ", " + value.codec() + ", " + (call.getArguments().size() == 4 ? integer(call.getArgument(3), source) : "Integer.MAX_VALUE") + ")", "map<" + key.shape() + "," + value.shape() + ">");
+                }
+                if (method.equals("either") && call.getArguments().size() == 2) {
+                    Wire left = codec(call.getArgument(0), source), right = codec(call.getArgument(1), source);
+                    return new Wire("org.stackanvil.packetforge.commons.Either<" + boxed(left.type()) + ", " + boxed(right.type()) + ">", "WireCodecs.either(" + left.codec() + ", " + right.codec() + ")", "either<" + left.shape() + "," + right.shape() + ">");
+                }
+            }
+            if (owner.equals("ResourceKey") && method.equals("streamCodec") && call.getArguments().size() == 1) return scalar("Identifier");
+            if (method.equals("map") && call.getArguments().size() == 2) {
+                String decode = call.getArgument(0).toString(), encode = call.getArgument(1).toString();
+                Wire inner = codec(call.getScope().get(), source);
+                if (decode.equals("Instant::ofEpochMilli") && encode.equals("Instant::toEpochMilli") && inner.shape().equals("LONG")) return new Wire("java.time.Instant", "WireCodecs.INSTANT", "INSTANT");
+                if (decode.equals("Short::intValue") && encode.equals("Integer::shortValue") && inner.shape().equals("SHORT")) return new Wire("int", "WireCodecs.mapped(WireCodecs.SHORT, Short::intValue, Integer::shortValue)", "SHORT_AS_INT");
+                if (decode.equals("ResourceKey::createRegistryKey") && encode.equals("ResourceKey::identifier") && inner.shape().equals("IDENTIFIER")) return inner;
             }
             if (method.equals("apply") && call.getArguments().size() == 1) {
                 Wire inner = codec(call.getScope().get(), source);
                 Expression argument = call.getArgument(0);
                 if (argument instanceof MethodCallExpr list && list.getScope().map(Object::toString).orElse("").equals("ByteBufCodecs") && list.getNameAsString().equals("list") && list.getArguments().size() <= 1) return container("list", inner, list.getArguments().isEmpty() ? "Integer.MAX_VALUE" : integer(list.getArgument(0), source));
+                if (argument instanceof MethodCallExpr collection && collection.getScope().map(Object::toString).orElse("").equals("ByteBufCodecs")) {
+                    if (collection.getNameAsString().equals("fixedSizeList") && collection.getArguments().size() == 1) {
+                        String size = integer(collection.getArgument(0), source);
+                        return new Wire("java.util.List<" + boxed(inner.type()) + ">", "WireCodecs.fixedList(" + inner.codec() + ", " + size + ")", "fixedList(" + size + ")<" + inner.shape() + ">");
+                    }
+                    if (collection.getNameAsString().equals("collection") && collection.getArguments().size() == 1 && collection.getArgument(0) instanceof MethodReferenceExpr factory) return container(factory.getScope().toString().contains("Set") ? "set" : "list", inner, "Integer.MAX_VALUE");
+                }
                 if (argument instanceof MethodReferenceExpr ref && ref.getScope().toString().equals("ByteBufCodecs") && ref.getIdentifier().equals("optional")) return container("optional", inner, "Integer.MAX_VALUE");
             }
         }
@@ -395,17 +459,36 @@ final class Analyzer {
     private static Wire scalar(String operation) { String[] spec = SCALARS.get(operation).split(":", 2); return new Wire(spec[1], "WireCodecs." + spec[0], spec[0]); }
     private static Wire string(String max) { return new Wire("String", "WireCodecs.string(" + max + ")", "UTF8"); }
     private static Wire container(String kind, Wire inner, String max) {
-        String type = switch (kind) { case "optional" -> "java.util.Optional<" + boxed(inner.type()) + ">"; case "list" -> "java.util.List<" + boxed(inner.type()) + ">"; case "nullable" -> boxed(inner.type()); default -> throw new Unsupported("Unknown container: " + kind); };
-        String codec = "WireCodecs." + kind + "(" + inner.codec() + (kind.equals("list") ? ", " + max : "") + ")";
+        String type = switch (kind) { case "optional" -> "java.util.Optional<" + boxed(inner.type()) + ">"; case "list" -> "java.util.List<" + boxed(inner.type()) + ">"; case "set" -> "java.util.Set<" + boxed(inner.type()) + ">"; case "nullable" -> boxed(inner.type()); default -> throw new Unsupported("Unknown container: " + kind); };
+        String codec = "WireCodecs." + kind + "(" + inner.codec() + (Set.of("list", "set").contains(kind) ? ", " + max : "") + ")";
         return new Wire(type, codec, kind + "<" + inner.shape() + ">");
     }
     static String boxed(String type) { return switch (type) { case "boolean" -> "Boolean"; case "byte" -> "Byte"; case "short" -> "Short"; case "int" -> "Integer"; case "long" -> "Long"; case "float" -> "Float"; case "double" -> "Double"; default -> type; }; }
+    private static Wire modelWire(Model model) { return new Wire(model.generatedName(), model.generatedName() + ".CODEC", "model:" + model.originalName()); }
+    private String getterField(Expression expression, SourceIndex.Source source) {
+        if (expression instanceof MethodReferenceExpr getter && index.resolve(getter.getScope().toString(), source).equals(source.name())) {
+            String name = getter.getIdentifier();
+            if (source.declaration() instanceof RecordDeclaration record && record.getParameters().stream().anyMatch(p -> p.getNameAsString().equals(name))) return name;
+            var methods = source.declaration().getMethodsByName(name);
+            if (methods.size() == 1 && methods.getFirst().getBody().isEmpty() && source.declaration() instanceof ClassOrInterfaceDeclaration clazz && clazz.isInterface()) return name;
+            if (methods.size() == 1 && methods.getFirst().getParameters().isEmpty()) {
+                var body = methods.getFirst().getBody().orElseThrow();
+                if (body.getStatements().size() == 1 && body.getStatement(0) instanceof ReturnStmt returned) return directField(returned.getExpression().orElseThrow());
+            }
+        }
+        if (expression instanceof LambdaExpr lambda && lambda.getParameters().size() == 1 && lambda.getBody() instanceof ExpressionStmt body && body.getExpression() instanceof FieldAccessExpr field && field.getScope().toString().equals(lambda.getParameter(0).getNameAsString())) return field.getNameAsString();
+        throw new Unsupported("Composite getter is not a direct field accessor: " + shortText(expression));
+    }
     private static String directField(Expression expression) {
         if (expression instanceof FieldAccessExpr field && field.getScope() instanceof ThisExpr) return field.getNameAsString();
         throw new Unsupported("Expression is not a direct field: " + shortText(expression));
     }
     private static String declaredType(String name, SourceIndex.Source source) {
         if (source.declaration() instanceof RecordDeclaration record) return record.getParameters().stream().filter(p -> p.getNameAsString().equals(name)).findFirst().orElseThrow(() -> new Unsupported("Unknown record field: " + name)).getTypeAsString();
+        if (source.declaration() instanceof ClassOrInterfaceDeclaration clazz && clazz.isInterface()) {
+            var methods = clazz.getMethodsByName(name);
+            if (methods.size() == 1 && methods.getFirst().getParameters().isEmpty()) return methods.getFirst().getTypeAsString();
+        }
         return source.declaration().getFieldByName(name).orElseThrow(() -> new Unsupported("Unknown field: " + name)).getVariables().stream().filter(v -> v.getNameAsString().equals(name)).findFirst().orElseThrow().getTypeAsString();
     }
     private static boolean isBuffer(String type) { return Set.of("FriendlyByteBuf", "RegistryFriendlyByteBuf", "ByteBuf").contains(type); }

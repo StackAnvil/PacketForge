@@ -12,6 +12,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Set;
+import java.util.OptionalInt;
+import java.util.BitSet;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.stackanvil.packetforge.commons.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -45,16 +49,33 @@ class GeneratedRoundTripTest {
         }
         return models;
     }
+    static List<String> innerShapes(String shape) {
+        if (!shape.contains("<")) return List.of();
+        String content = shape.substring(shape.indexOf('<') + 1, shape.length() - 1);
+        var result = new java.util.ArrayList<String>(); int depth = 0, start = 0;
+        for (int i = 0; i < content.length(); i++) {
+            char c = content.charAt(i); if (c == '<') depth++; else if (c == '>') depth--;
+            else if (c == ',' && depth == 0) { result.add(content.substring(start, i)); start = i + 1; }
+        }
+        result.add(content.substring(start)); return result;
+    }
     static Object sample(Type type, String shape, int variant, Map<String, JsonObject> models) throws Exception {
         if (shape.startsWith("nullable<")) {
             if (variant == 0) return null;
             shape = shape.substring("nullable<".length(), shape.length() - 1);
         }
         if (type instanceof ParameterizedType parameterized) {
-            Type inner = parameterized.getActualTypeArguments()[0];
-            String innerShape = shape.contains("<") ? shape.substring(shape.indexOf('<') + 1, shape.length() - 1) : "";
-            if (parameterized.getRawType() == Optional.class) return variant == 0 ? Optional.empty() : Optional.of(sample(inner, innerShape, variant, models));
-            if (parameterized.getRawType() == List.class) return variant == 0 ? List.of() : List.of(sample(inner, innerShape, variant, models));
+            Type[] arguments = parameterized.getActualTypeArguments();
+            List<String> innerShapes = innerShapes(shape);
+            String inner = innerShapes.isEmpty() ? "" : innerShapes.getFirst();
+            if (parameterized.getRawType() == Optional.class) return variant == 0 ? Optional.empty() : Optional.of(sample(arguments[0], inner, variant, models));
+            if (parameterized.getRawType() == List.class) {
+                int count = shape.startsWith("fixedList(") ? Integer.parseInt(shape.substring(10, shape.indexOf(')'))) : variant == 0 ? 0 : 1;
+                var values = new java.util.ArrayList<>(); for (int i = 0; i < count; i++) values.add(sample(arguments[0], inner, variant, models)); return values;
+            }
+            if (parameterized.getRawType() == Set.class) return variant == 0 ? Set.of() : Set.of(sample(arguments[0], inner, variant, models));
+            if (parameterized.getRawType() == Map.class) return variant == 0 ? Map.of() : Map.of(sample(arguments[0], inner, variant, models), sample(arguments[1], innerShapes.get(1), variant, models));
+            if (parameterized.getRawType() == Either.class) return variant % 2 == 0 ? Either.left(sample(arguments[0], inner, variant, models)) : Either.right(sample(arguments[1], innerShapes.get(1), variant, models));
             throw new IllegalArgumentException("Unrecognized generic type: " + type);
         }
         Class<?> clazz = (Class<?>) type;
@@ -67,6 +88,15 @@ class GeneratedRoundTripTest {
         if (clazz == short.class || clazz == Short.class) return (short) variant;
         if (clazz == boolean.class || clazz == Boolean.class) return variant != 0;
         if (clazz == byte[].class) return variant == 0 ? new byte[0] : new byte[]{1, -1};
+        if (clazz == int[].class) return variant == 0 ? new int[0] : new int[]{variant, -variant};
+        if (clazz == long[].class) return variant == 0 ? new long[0] : new long[]{variant, Long.MIN_VALUE};
+        if (clazz == OptionalInt.class) return variant == 0 ? OptionalInt.empty() : OptionalInt.of(variant - 1);
+        if (clazz == Instant.class) return Instant.ofEpochMilli(variant);
+        if (clazz == BitSet.class) { BitSet value = new BitSet(); if (variant != 0) value.set(variant * 65); return value; }
+        if (clazz == Vector3.class) return new Vector3(variant, -variant, variant * 2);
+        if (clazz == FloatVector3.class) return new FloatVector3(variant, -variant, variant * 2);
+        if (clazz == Quaternion.class) return new Quaternion(variant, -variant, variant, 1);
+        if (clazz == ChunkPosition.class) return new ChunkPosition(-variant, variant);
         if (clazz == UUID.class) return new UUID(variant, -variant);
         if (clazz == BlockPosition.class) return new BlockPosition(-variant, variant, variant);
         if (clazz.isEnum()) { Object[] values = clazz.getEnumConstants(); return values[variant % values.length]; }

@@ -2,7 +2,7 @@
 
 PacketForge generates a standalone Minecraft protocol library from the official server jar. It uses Vineflower and JavaParser to recover packet registrations and serialization operations.
 
-This is an experimental generator, inspired by [MCProtocolLib](https://github.com/GeyserMC/MCProtocolLib). It is not a drop-in replacement. Minecraft 26.3 uses protocol version 777. The current generator emits codecs for **128 of 260 packet registrations**. It reports the other 132 with their IDs, source locations, and rejection reasons.
+This is an experimental generator, inspired by [MCProtocolLib](https://github.com/GeyserMC/MCProtocolLib). It is not a drop-in replacement. Minecraft 26.3 uses protocol version 777. The current generator emits codecs for **156 of 260 packet registrations**. It reports the other 104 with their IDs, source locations, and rejection reasons.
 
 ## Build
 
@@ -45,7 +45,7 @@ var received = registry.decode(state, flow, completePacketBodyWithId);
 
 The analyzer lowers accepted codecs into a small intermediate representation. Each field records its original type, generated type, decoder, encoder, and wire shape. The emitter creates new source files from that representation. It does not copy packet methods or listener code.
 
-Supported patterns include direct buffer constructors and writers, record constructor delegation, `Packet.codec`, `StreamCodec.unit`, and record-based `StreamCodec.composite`. Shared wire codecs cover primitives, variable integers, bounded UTF-8, UUIDs, identifiers, byte arrays, packed block positions, nullable values, optional values, and lists. The analyzer also follows supported codec aliases and nested value codecs.
+Supported patterns include direct buffer constructors and writers, record constructor delegation, `Packet.codec`, `StreamCodec.unit`, and `StreamCodec.composite`, wrapper mappings, and constructor/writer pairs for nested data. Validation guards remain in generated constructors. Shared wire codecs cover primitives, variable integers, bounded UTF-8, UUIDs, identifiers, byte arrays, packed block positions, nullable values, optional values, maps, sets, fixed-size lists, and ordinary lists. Movement vectors use standalone value types and shared codecs for their full and compact representations. The analyzer also follows supported codec aliases and nested value codecs.
 
 The analyzer checks field order and matching read/write operations. It recovers ordinal enums, continuous enum ID maps and their fallback rules, and matching enum switch expressions. Registry values use numeric wire IDs in the generated API. The application must supply meaning for those IDs.
 
@@ -68,4 +68,4 @@ The generator can reuse existing decompiled sources. Relative paths resolve from
 
 `./gradlew test` tests malformed wire inputs, field mismatches, generated Java compilation, and packet ID preservation. It also round-trips three samples for every generated registration. The compatibility test decodes and re-encodes those bodies with vanilla, plus 17 focused samples. It loads the verified server jar and its dependencies in an isolated class loader and initializes vanilla registries. This runs in tests only.
 
-These tests cover 384 generated round trips and 401 vanilla comparisons for 26.3. They do not prove correctness for every value or provide a live client/server interoperability test. Other Minecraft versions are not validated. The coverage report includes exact input hashes and tool versions for reproducing the extraction.
+These tests cover 468 generated round trips and 485 vanilla comparisons for 26.3. They do not prove correctness for every value or provide a live client/server interoperability test. Other Minecraft versions are not validated. The coverage report includes exact input hashes and tool versions for reproducing the extraction.

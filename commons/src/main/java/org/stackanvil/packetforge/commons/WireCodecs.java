@@ -6,6 +6,13 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.OptionalInt;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -42,6 +49,45 @@ public final class WireCodecs {
         String path = separator < 0 ? value : value.substring(separator + 1);
         if (!namespace.matches("[a-z0-9_.-]+") || !path.matches("[a-z0-9/._-]*")) throw new IllegalArgumentException("Invalid identifier: " + value);
         return namespace + ":" + path;
+    }
+    public static final PacketCodec<ChunkPosition> CHUNK_POSITION = of(b -> ChunkPosition.unpack(b.readLong()), (b, v) -> b.writeLong(v.packed()));
+    public static final PacketCodec<Instant> INSTANT = mapped(LONG, Instant::ofEpochMilli, Instant::toEpochMilli);
+    public static final PacketCodec<OptionalInt> OPTIONAL_VAR_INT = mapped(VAR_INT, v -> v == 0 ? OptionalInt.empty() : OptionalInt.of(v - 1), v -> v.isPresent() ? v.getAsInt() + 1 : 0);
+    public static final PacketCodec<long[]> LONG_ARRAY = of(b -> {
+        int count = checkedLength(VAR_INT.decode(b), b.readableBytes() / 8);
+        long[] values = new long[count]; for (int i = 0; i < count; i++) values[i] = b.readLong(); return values;
+    }, (b, values) -> { VAR_INT.encode(b, values.length); for (long value : values) b.writeLong(value); });
+    public static final PacketCodec<int[]> VAR_INT_ARRAY = of(b -> {
+        int count = checkedLength(VAR_INT.decode(b), b.readableBytes());
+        int[] values = new int[count]; for (int i = 0; i < count; i++) values[i] = VAR_INT.decode(b); return values;
+    }, (b, values) -> { VAR_INT.encode(b, values.length); for (int value : values) VAR_INT.encode(b, value); });
+    public static final PacketCodec<BitSet> BIT_SET = mapped(byteArray(Integer.MAX_VALUE), BitSet::valueOf, BitSet::toByteArray);
+    public static <A, B> PacketCodec<B> mapped(PacketCodec<A> original, Function<A, B> decode, Function<B, A> encode) {
+        return of(b -> decode.apply(original.decode(b)), (b, value) -> original.encode(b, encode.apply(value)));
+    }
+    public static <T> PacketCodec<List<T>> fixedList(PacketCodec<T> element, int size) {
+        if (size < 0) throw new IllegalArgumentException("Negative list size");
+        return of(b -> { List<T> values = new ArrayList<>(Math.min(size, 65536)); for (int i = 0; i < size; i++) values.add(element.decode(b)); return List.copyOf(values); },
+            (b, values) -> { if (values.size() != size) throw new IllegalArgumentException("Expected " + size + " values"); for (T value : values) element.encode(b, value); });
+    }
+    public static <T> PacketCodec<Set<T>> set(PacketCodec<T> element, int maxSize) {
+        return mapped(list(element, maxSize), values -> java.util.Collections.unmodifiableSet(new LinkedHashSet<>(values)), ArrayList::new);
+    }
+    public static <K, V> PacketCodec<Map<K, V>> map(PacketCodec<K> key, PacketCodec<V> value, int maxSize) {
+        return of(b -> {
+            int count = checkedLength(VAR_INT.decode(b), maxSize);
+            Map<K, V> values = new LinkedHashMap<>();
+            for (int i = 0; i < count; i++) values.put(key.decode(b), value.decode(b));
+            return java.util.Collections.unmodifiableMap(values);
+        }, (b, values) -> { checkedLength(values.size(), maxSize); VAR_INT.encode(b, values.size()); values.forEach((k, v) -> { key.encode(b, k); value.encode(b, v); }); });
+    }
+    public static <L, R> PacketCodec<Either<L, R>> either(PacketCodec<L> left, PacketCodec<R> right) {
+        return of(b -> b.readBoolean() ? Either.left(left.decode(b)) : Either.right(right.decode(b)), (b, value) -> {
+            switch (value) {
+                case Either.Left<L, R> branch -> { b.writeBoolean(true); left.encode(b, branch.value()); }
+                case Either.Right<L, R> branch -> { b.writeBoolean(false); right.encode(b, branch.value()); }
+            }
+        });
     }
     private static long readVar(ByteBuf b, int limit) {
         long value = 0;

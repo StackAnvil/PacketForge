@@ -54,6 +54,7 @@ final class Emitter {
             code.append(IMPORTS).append("\npublic record ").append(simple).append("(");
             code.append(String.join(", ", model.fields().stream().map(f -> f.read().type() + " " + f.name()).toList()));
             code.append(")").append(model.packet() ? " implements Packet" : "").append(" {\n");
+            if (!model.validations().isEmpty()) code.append("    public ").append(simple).append(" {\n").append(String.join("\n", model.validations())).append("\n    }\n");
             for (int i = 0; i < model.fields().size(); i++) {
                 var field = model.fields().get(i);
                 code.append("    private static final PacketCodec<").append(Analyzer.boxed(field.read().type())).append("> READ_").append(i).append(" = ").append(field.read().codec()).append(";\n");
