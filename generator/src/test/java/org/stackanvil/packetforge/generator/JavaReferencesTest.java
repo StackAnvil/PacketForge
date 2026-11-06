@@ -34,6 +34,7 @@ class JavaReferencesTest {
         assertEquals(table, references.expression("org.stackanvil.packetforge.protocol.GeneratedWireCodecs.items"));
         assertEquals(table, references.expression("GeneratedWireCodecs.items_payloads()"));
         assertEquals(table, references.expression("GeneratedWireCodecs::items_payloads"));
+        assertEquals(table, references.expression("GeneratedWireCodecs.items_types()"));
     }
 
     @Test

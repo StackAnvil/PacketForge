@@ -1341,7 +1341,7 @@ final class Analyzer {
                         "org.stackanvil.packetforge.commons.ComponentPatch",
                         "WireCodecs.lazy(() -> ComponentCodecs.patch(org.stackanvil.packetforge.protocol.GeneratedWireCodecs."
                                 + name
-                                + "_payloads(), "
+                                + "_types(), "
                                 + field.equals("DELIMITED_STREAM_CODEC")
                                 + "))",
                         "COMPONENT_PATCH:" + name);

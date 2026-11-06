@@ -70,6 +70,9 @@ final class Emitter {
         var modelEmitter = new ModelJavaEmitter();
         for (var model : models) writeJava(output, model.generatedName(), modelEmitter.emit(model));
         emitDispatches(output, selectedDispatches);
+        for (var table : selectedDispatches)
+            if (table.registry().equals("DATA_COMPONENT_TYPE"))
+                writeJava(output, ComponentTypesEmitter.NAME, new ComponentTypesEmitter().emit(table));
         emitRegistry(output, protocol, registrations, allModels);
         int count = (int)
                 registrations.stream().filter(Analyzer.Registration::supported).count();
@@ -108,6 +111,11 @@ final class Emitter {
                     .append(" = WireCodecs.lazy(() -> ")
                     .append(dispatch.implementation().codec())
                     .append(");\n");
+        for (var dispatch : dispatches)
+            if (dispatch.registry().equals("DATA_COMPONENT_TYPE"))
+                code.append("public static java.util.List<DataComponentType<?>> ")
+                        .append(dispatch.name())
+                        .append("_types() { return DataComponentTypes.values(); }\n");
         for (var dispatch : dispatches)
             if (dispatch.registry().equals("DATA_COMPONENT_TYPE")
                     || dispatch.registry().equals("COMMAND_ARGUMENT_TYPE")

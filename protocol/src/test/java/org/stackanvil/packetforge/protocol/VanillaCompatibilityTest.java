@@ -609,13 +609,9 @@ class VanillaCompatibilityTest {
                         v.has("registry") && v.get("registry").getAsString().equals("DATA_COMPONENT_TYPE"))
                 .findFirst()
                 .orElseThrow();
-        String name = definition.get("name").getAsString();
-        @SuppressWarnings("unchecked")
-        var schemas = (java.util.Map<Integer, PacketCodec<?>>)
-                GeneratedWireCodecs.class.getMethod(name + "_payloads").invoke(null);
         int compared = 0;
         for (boolean delimited : new boolean[] {false, true}) {
-            PacketCodec<ComponentPatch> codec = ComponentCodecs.patch(schemas, delimited);
+            PacketCodec<ComponentPatch> codec = ComponentCodecs.patch(DataComponentTypes.values(), delimited);
             Object source = loader.loadClass("net.minecraft.core.component.DataComponentPatch")
                     .getField(delimited ? "DELIMITED_STREAM_CODEC" : "STREAM_CODEC")
                     .get(null);
@@ -629,9 +625,12 @@ class VanillaCompatibilityTest {
                             schema.get("shape").getAsString(),
                             variant,
                             models);
-                    ComponentPatch patch = new ComponentPatch(java.util.Map.of(id, value), java.util.Set.of());
-                    for (ComponentPatch sample :
-                            List.of(patch, new ComponentPatch(java.util.Map.of(), java.util.Set.of(id)))) {
+                    ComponentPatch patch = ComponentPatch.of(sampleComponent(DataComponentTypes.byId(id), value));
+                    for (ComponentPatch sample : List.of(
+                            patch,
+                            ComponentPatch.builder()
+                                    .remove(DataComponentTypes.byId(id))
+                                    .build())) {
                         ByteBuf encoded = Unpooled.buffer();
                         byte[] expected;
                         try {
@@ -853,6 +852,13 @@ class VanillaCompatibilityTest {
         }
     }
 
+    private static <T> DataComponent<T> sampleComponent(DataComponentType<T> type, Object sample) {
+        // Reflection creates the sample from the type recorded in the extraction report.
+        @SuppressWarnings("unchecked")
+        T value = (T) sample;
+        return type.withValue(value);
+    }
+
     private static boolean sameValue(Object left, Object right) throws Exception {
         if (left == null || right == null) return left == right;
         if (!left.getClass().equals(right.getClass())) return false;
@@ -868,6 +874,13 @@ class VanillaCompatibilityTest {
         }
         if (left instanceof java.util.Optional<?> a && right instanceof java.util.Optional<?> b)
             return sameValue(a.orElse(null), b.orElse(null));
+        if (left instanceof ComponentPatch a && right instanceof ComponentPatch b) {
+            var aValues = a.added().stream()
+                    .collect(java.util.stream.Collectors.toMap(DataComponent::type, DataComponent::value));
+            var bValues = b.added().stream()
+                    .collect(java.util.stream.Collectors.toMap(DataComponent::type, DataComponent::value));
+            return a.removed().equals(b.removed()) && sameValue(aValues, bValues);
+        }
         if (left.getClass().isRecord()) {
             for (var component : left.getClass().getRecordComponents())
                 if (!sameValue(

@@ -26,7 +26,7 @@ Minecraft files stay under `build/minecraft/26.3/`. Generated Java files stay un
 | `commons` | Provide Netty buffer codecs, packet interfaces, packed block positions, and an immutable packet registry. |
 | `protocol` | Generate and compile the 26.3 library. Publish it separately from the generator. |
 
-The generated protocol depends on `commons`, Netty, and Gson. Minecraft, Vineflower, and JavaParser are absent from its runtime dependencies. Packet records expose a `CODEC` and implement `Packet.serialize(ByteBuf)`.
+The generated protocol depends on `commons`, Netty, Gson, and Adventure. Minecraft, Vineflower, and JavaParser are absent from its runtime dependencies. Packet records expose a `CODEC` and implement `Packet.serialize(ByteBuf)`.
 
 ```java
 import org.stackanvil.packetforge.protocol.GeneratedProtocol;
@@ -38,6 +38,23 @@ packet.serialize(output); // Packet body, without its numeric ID.
 var registry = GeneratedProtocol.registry();
 var received = registry.decode(state, flow, completePacketBodyWithId);
 ```
+
+`DataComponentTypes` contains a typed constant for each of the 122 recovered data-component types. Each constant records its wire ID, Adventure `Key`, and payload codec. The generator derives the names and value types from the registry. For example, `DAMAGE` accepts an `Integer`, and `LORE` accepts the generated `ItemLore` type.
+
+```java
+import org.stackanvil.packetforge.commons.ComponentPatch;
+import org.stackanvil.packetforge.commons.Unit;
+import org.stackanvil.packetforge.protocol.DataComponentTypes;
+
+var patch = ComponentPatch.builder()
+        .set(DataComponentTypes.DAMAGE, 12)
+        .set(DataComponentTypes.UNBREAKABLE, Unit.INSTANCE)
+        .remove(DataComponentTypes.CUSTOM_NAME)
+        .build();
+int damage = patch.get(DataComponentTypes.DAMAGE).orElse(0);
+```
+
+`ComponentPatch` exposes typed values and keys instead of numeric maps. `get` returns an `Optional` of the key's value type. `remove` requests removal from the target item. `reset` clears a change from the builder. Builders create immutable snapshots, and `toBuilder()` starts from an existing patch. `DataComponentTypes.byId` and `byKey` resolve runtime identities. The wire codec rejects keys from a conflicting registry.
 
 Named packet codecs produce separate generated records when their layouts differ. Their names include the original codec field, such as `ClientboundShowDialogPacket_CONTEXT_FREE_STREAM_CODEC`. The report records that source field.
 
@@ -60,7 +77,7 @@ The analyzer lowers accepted codecs into a small intermediate representation. `M
 
 Supported patterns include direct buffer constructors and writers, record constructor delegation, `Packet.codec`, `StreamCodec.unit`, and `StreamCodec.composite`, wrapper mappings, and constructor/writer pairs for nested data. Supported validation guards remain in generated constructors, including compact record constructors. Shared wire codecs cover primitives, variable integers, bounded UTF-8, UUIDs, identifiers, byte arrays, packed block positions, nullable values, optional values, maps, sets, fixed-size lists, and ordinary lists. UTF-8 decoding uses vanilla's replacement behavior for malformed byte sequences. Movement vectors use standalone value types and shared codecs for their full and compact representations. Relative entity movement uses `MovementDelta.Linear` or timed `MovementDelta.Stepped` values. The outer packet supplies the step count. Equipment updates use ordered `Pair<EquipmentSlot, ItemStack>` entries and retain their continuation-bit encoding. Packed section changes expose position and block-state ID arrays, with decoded allocation sizes bounded by the available input bytes. The analyzer also follows supported codec aliases and nested value codecs.
 
-For linear layouts, the analyzer checks field order and matching read/write operations. For imperative layouts, it translates the control flow and compares wire operation kinds. It recovers ordinal enums, continuous and sparse enum ID maps, named enum values and their fallback rules, matching enum switch expressions, and enum-held constructor decoders with virtual payload writers. The latter recovers all six boss-event operations, including the payload-free remove operation. Registry values use numeric wire IDs or `RegistryValue<T>` for references with an inline alternative. `HolderSet` represents registry tags and explicit ID lists. `ComponentPatch` holds added component wire values and removed component IDs. `ItemStack` holds its count, item ID, and component patch. Shared codecs support both ordinary and length-delimited component payloads. Entity metadata uses indexed `MetadataEntry` values and a terminating byte. The analyzer recovers all 44 serializer IDs from the explicit registration sequence. NBT-backed fields use `NbtTag`, and JSON-backed fields use Gson `JsonElement`. Applications interpret the registry IDs and NBT schemas. Generated records describe wire values, and the report records their original types and factories. Domain-only `StreamCodec.map` transformations retain the underlying wire type and record the source mapping as projection metadata.
+For linear layouts, the analyzer checks field order and matching read/write operations. For imperative layouts, it translates the control flow and compares wire operation kinds. It recovers ordinal enums, continuous and sparse enum ID maps, named enum values and their fallback rules, matching enum switch expressions, and enum-held constructor decoders with virtual payload writers. The latter recovers all six boss-event operations, including the payload-free remove operation. Registry values use numeric wire IDs or `RegistryValue<T>` for references with an inline alternative. `HolderSet` represents registry tags and explicit ID lists. `ComponentPatch` holds typed component values and explicit removals. `ItemStack` holds its count, item ID, and component patch. Shared codecs support both ordinary and length-delimited component payloads. Entity metadata uses indexed `MetadataEntry` values and a terminating byte. The analyzer recovers all 44 serializer IDs from the explicit registration sequence. NBT-backed fields use `NbtTag`, and JSON-backed fields use Gson `JsonElement`. Applications interpret the registry IDs and NBT schemas. Generated records describe wire values, and the report records their original types and factories. Domain-only `StreamCodec.map` transformations retain the underlying wire type and record the source mapping as projection metadata.
 
 Unknown packet layouts remain in `GeneratedProtocol.DESCRIPTORS` and the JSON report. They have no registered codec. Their original IDs remain reserved. Unknown registration operations fail generation because they can shift every later ID.
 

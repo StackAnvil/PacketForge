@@ -4,17 +4,21 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.netty.buffer.Unpooled;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import net.kyori.adventure.key.Key;
 import org.junit.jupiter.api.Test;
 
 class ComponentCodecsTest {
-    private static final Map<Integer, PacketCodec<?>> SCHEMAS =
-            Map.of(0, WireCodecs.VAR_INT, 1, WireCodecs.STRING, 2, WireCodecs.UNIT);
+    private static final DataComponentType<Integer> NUMBER =
+            new DataComponentType<>(0, Key.key("test:number"), WireCodecs.VAR_INT);
+    private static final DataComponentType<String> TEXT =
+            new DataComponentType<>(1, Key.key("test:text"), WireCodecs.STRING);
+    private static final DataComponentType<Unit> FLAG =
+            new DataComponentType<>(2, Key.key("test:flag"), WireCodecs.UNIT);
+    private static final List<DataComponentType<?>> SCHEMAS = List.of(NUMBER, TEXT, FLAG);
 
     @Test
     void encodesAddedAndRemovedComponentsWithOptionalPayloadDelimiters() {
-        var value = new ComponentPatch(Map.of(0, 42), Set.of(1));
+        var value = ComponentPatch.builder().set(NUMBER, 42).remove(TEXT).build();
         for (boolean delimited : new boolean[] {false, true}) {
             var codec = ComponentCodecs.patch(SCHEMAS, delimited);
             var buffer = Unpooled.buffer();
@@ -62,7 +66,10 @@ class ComponentCodecsTest {
         var patch = ComponentCodecs.patch(SCHEMAS, false);
         var optional = ComponentCodecs.itemStack(patch, true);
         var required = ComponentCodecs.itemStack(patch, false);
-        var item = new ItemStack(2, 7, new ComponentPatch(Map.of(2, Unit.INSTANCE), Set.of(1)));
+        var item = new ItemStack(
+                2,
+                7,
+                ComponentPatch.builder().set(FLAG, Unit.INSTANCE).remove(TEXT).build());
         var buffer = Unpooled.buffer();
         try {
             optional.encode(buffer, ItemStack.EMPTY);
@@ -76,6 +83,26 @@ class ComponentCodecsTest {
         } finally {
             buffer.release();
         }
+    }
+
+    @Test
+    void rejectsForeignKeysAndInvalidSchemaTables() {
+        var foreign = new DataComponentType<>(0, Key.key("test:foreign"), WireCodecs.STRING);
+        var codec = ComponentCodecs.patch(SCHEMAS, false);
+        var buffer = Unpooled.buffer();
+        try {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> codec.encode(buffer, ComponentPatch.of(foreign.withValue("wrong codec"))));
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> codec.encode(
+                            buffer, ComponentPatch.builder().remove(foreign).build()));
+        } finally {
+            buffer.release();
+        }
+        assertThrows(IllegalArgumentException.class, () -> ComponentCodecs.patch(List.of(NUMBER, foreign), false));
+        assertThrows(IllegalArgumentException.class, () -> ComponentCodecs.patch(List.of(TEXT), false));
     }
 
     @Test

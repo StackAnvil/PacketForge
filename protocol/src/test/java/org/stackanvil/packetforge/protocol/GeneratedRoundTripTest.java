@@ -255,7 +255,9 @@ class GeneratedRoundTripTest {
         }
         if (clazz == HolderSet.class) return new HolderSet.Direct(variant == 0 ? List.of() : List.of(1));
         if (clazz == ComponentPatch.class)
-            return variant == 0 ? ComponentPatch.EMPTY : new ComponentPatch(Map.of(1, 12 + variant), Set.of());
+            return variant == 0
+                    ? ComponentPatch.EMPTY
+                    : ComponentPatch.of(DataComponentTypes.MAX_STACK_SIZE.withValue(12 + variant));
         if (clazz == ItemStack.class)
             return variant == 0 && shape.contains("OPTIONAL_")
                     ? ItemStack.EMPTY

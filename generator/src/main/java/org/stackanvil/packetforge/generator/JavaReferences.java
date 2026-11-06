@@ -91,6 +91,7 @@ final class JavaReferences {
     private void member(String owner, String name, Set<SchemaReference> references) {
         if (owner.equals(TABLES) || owner.equals("GeneratedWireCodecs")) {
             String table = name.endsWith("_payloads") ? name.substring(0, name.length() - "_payloads".length()) : name;
+            if (name.endsWith("_types")) table = name.substring(0, name.length() - "_types".length());
             references.add(new SchemaReference.Dispatch(table));
         } else model(owner).ifPresent(references::add);
     }
