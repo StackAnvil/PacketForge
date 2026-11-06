@@ -437,11 +437,8 @@ final class ProgramLowerer {
                     "org.stackanvil.packetforge.commons.NbtTag.Compound",
                     "NbtCodecs.NULLABLE_COMPOUND",
                     "NBT_COMPOUND_NULLABLE");
-        if (name.equals("Tag") || name.equals("Component"))
-            return new Wire(
-                    "org.stackanvil.packetforge.commons.NbtTag",
-                    "NbtCodecs.TAG",
-                    name.equals("Component") ? "NBT:net.minecraft.network.chat.ComponentSerialization#CODEC" : "NBT");
+        if (name.equals("Component")) return TextWire.component(false);
+        if (name.equals("Tag")) return new Wire("org.stackanvil.packetforge.commons.NbtTag", "NbtCodecs.TAG", "NBT");
         if (name.equals("UUID")) return new Wire("java.util.UUID", "WireCodecs.UUID_CODEC", "UUID_CODEC");
         if (name.equals("byte[]")) return new Wire("byte[]", "WireCodecs.byteArray(Integer.MAX_VALUE)", "byteArray");
         if (name.equals("VecDelta")) return new MovementDeltaAnalyzer(analyzer).value();
@@ -877,7 +874,7 @@ final class ProgramLowerer {
                         .flatMap(f -> f.getVariable(0).getInitializer())
                         .orElse(null);
                 if (initializer != null && initializer.toString().equals("Component.empty()"))
-                    return expression("new org.stackanvil.packetforge.commons.NbtTag.StringValue(\"\")");
+                    return expression("net.kyori.adventure.text.Component.empty()");
                 if (initializer instanceof LiteralExpr) return initializer.clone();
             } catch (Unsupported missingConstant) {
             }

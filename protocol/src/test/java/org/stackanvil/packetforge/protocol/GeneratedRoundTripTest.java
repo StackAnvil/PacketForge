@@ -278,9 +278,12 @@ class GeneratedRoundTripTest {
                 return new NbtTag.Compound(Map.of("loot_table", new NbtTag.StringValue("minecraft:empty")));
             return new NbtTag.Compound(Map.of());
         }
-        if (clazz == NbtTag.class && shape.contains("net.minecraft.network.chat.Style.Serializer#"))
-            return new NbtTag.Compound(
-                    variant == 0 ? Map.of() : Map.of("bold", new NbtTag.ByteValue((byte) (variant % 2))));
+        if (clazz == net.kyori.adventure.text.Component.class)
+            return net.kyori.adventure.text.Component.text(variant == 0 ? "" : "sample" + variant);
+        if (clazz == net.kyori.adventure.text.format.Style.class)
+            return variant == 0
+                    ? net.kyori.adventure.text.format.Style.empty()
+                    : net.kyori.adventure.text.format.Style.style(net.kyori.adventure.text.format.TextDecoration.BOLD);
         if (clazz == NbtTag.class && shape.contains("net.minecraft.server.dialog.Dialog#"))
             return new NbtTag.Compound(new java.util.HashMap<>(Map.of(
                     "type",

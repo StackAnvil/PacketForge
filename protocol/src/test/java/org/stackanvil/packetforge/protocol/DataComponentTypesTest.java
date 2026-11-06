@@ -91,13 +91,17 @@ class DataComponentTypesTest {
         String source = """
                 import org.stackanvil.packetforge.protocol.DataComponentTypes;
                 import org.stackanvil.packetforge.commons.ComponentPatch;
+                import net.kyori.adventure.text.Component;
                 class Client {
                     ComponentPatch patch = ComponentPatch.builder().set(DataComponentTypes.DAMAGE, 12).build();
                     int damage = patch.get(DataComponentTypes.DAMAGE).orElseThrow();
+                    ComponentPatch named = ComponentPatch.builder().set(DataComponentTypes.CUSTOM_NAME, Component.text("name")).build();
                 }
                 """;
         assertTrue(compile(source));
         assertFalse(compile(source.replace("DAMAGE, 12", "DAMAGE, \"wrong\"")));
+        assertFalse(compile(source.replace(
+                "Component.text(\"name\")", "new org.stackanvil.packetforge.commons.NbtTag.StringValue(\"name\")")));
     }
 
     private boolean compile(String source) throws Exception {
@@ -107,6 +111,7 @@ class DataComponentTypesTest {
                 List.of(
                                 DataComponentTypes.class,
                                 ComponentPatch.class,
+                                net.kyori.adventure.text.Component.class,
                                 Key.class,
                                 ByteBuf.class,
                                 ReferenceCounted.class)

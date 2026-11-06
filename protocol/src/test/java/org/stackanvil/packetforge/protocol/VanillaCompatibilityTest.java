@@ -258,6 +258,7 @@ class VanillaCompatibilityTest {
             auditRelatedValues(loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
             VanillaVariantAudit.run(
                     loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
+            VanillaTextAudit.run(loader, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
         }
     }
 

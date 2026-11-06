@@ -1431,11 +1431,14 @@ final class Analyzer {
             if (owner.equals("ByteBufCodecs")) {
                 if (Set.of("fromCodec", "fromCodecTrusted", "fromCodecWithRegistries", "fromCodecWithRegistriesTrusted")
                                 .contains(method)
-                        && !call.getArguments().isEmpty())
+                        && !call.getArguments().isEmpty()) {
+                    var text = TextWire.nbt(call.getArgument(0), source, index, method.contains("Trusted"));
+                    if (text.isPresent()) return text.get();
                     return new Wire(
                             "org.stackanvil.packetforge.commons.NbtTag",
                             method.contains("Trusted") ? "NbtCodecs.TRUSTED_TAG" : "NbtCodecs.TAG",
                             "NBT:" + source.name() + "#" + call.getArgument(0));
+                }
                 if (method.equals("optionalTagCodec") && call.getArguments().size() == 1) {
                     String quota = "2097152", depth = "512";
                     if (call.getArgument(0) instanceof LambdaExpr lambda
@@ -1656,8 +1659,16 @@ final class Analyzer {
                 if (argument instanceof MethodCallExpr operation
                         && operation.getScope().map(Object::toString).orElse("").equals("ByteBufCodecs")
                         && operation.getNameAsString().equals("fromCodec")
-                        && operation.getArguments().size() == 2)
+                        && operation.getArguments().size() == 2) {
+                    var text = TextWire.nbt(operation.getArgument(1), source, index, false);
+                    if (text.isPresent() && inner.type().equals("com.google.gson.JsonElement"))
+                        return new Wire(
+                                text.get().type(),
+                                TextWire.codecs() + (text.get().type().endsWith(".Style") ? ".jsonStyle(" : ".json(")
+                                        + inner.codec() + ")",
+                                inner.shape() + ":" + operation.getArgument(1));
                     return new Wire(inner.type(), inner.codec(), inner.shape() + ":" + operation.getArgument(1));
+                }
                 if (argument instanceof MethodCallExpr list
                         && list.getScope().map(Object::toString).orElse("").equals("ByteBufCodecs")
                         && list.getNameAsString().equals("list")
