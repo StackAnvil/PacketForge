@@ -7,55 +7,54 @@ import net.kyori.adventure.key.Key;
 public final class CommandTreeCodecs {
     private CommandTreeCodecs() {}
 
-    public static PacketCodec<CommandNode> node(Map<Integer, PacketCodec<?>> schemas) {
+    public static <A extends TypedPayload<Integer>> PacketCodec<CommandNode<A>> node(
+            Map<Integer, PacketCodec<A>> schemas) {
         var codecs = Map.copyOf(schemas);
         return WireCodecs.of(
                 input -> {
                     int flags = input.readByte();
                     int[] children = WireCodecs.VAR_INT_ARRAY.decode(input);
                     int redirect = (flags & 8) != 0 ? WireCodecs.VAR_INT.decode(input) : 0;
-                    CommandNode.Stub stub = null;
+                    CommandNode.Stub<A> stub = null;
                     if ((flags & 3) == 2) {
                         String name = WireCodecs.STRING.decode(input);
                         int id = WireCodecs.VAR_INT.decode(input);
                         var codec = codecs.get(id);
                         if (codec != null) {
-                            Object value = codec.decode(input);
+                            A value = codec.decode(input);
+                            if (value.type() != id)
+                                throw new IllegalArgumentException(
+                                        "Command argument discriminator does not match its codec");
                             Key suggestion = (flags & 16) != 0 ? WireCodecs.IDENTIFIER.decode(input) : null;
-                            stub = new CommandNode.Argument(name, new Variant<>(id, value), suggestion);
+                            stub = new CommandNode.Argument<>(name, value, suggestion);
                         }
-                    } else if ((flags & 3) == 1) stub = new CommandNode.Literal(WireCodecs.STRING.decode(input));
-                    return new CommandNode(flags, children, redirect, stub);
+                    } else if ((flags & 3) == 1) stub = new CommandNode.Literal<>(WireCodecs.STRING.decode(input));
+                    return new CommandNode<>(flags, children, redirect, stub);
                 },
                 (output, node) -> {
                     output.writeByte(node.flags());
                     WireCodecs.VAR_INT_ARRAY.encode(output, node.children());
                     if ((node.flags() & 8) != 0) WireCodecs.VAR_INT.encode(output, node.redirect());
-                    if (node.stub() instanceof CommandNode.Literal literal)
+                    if (node.stub() instanceof CommandNode.Literal<A> literal)
                         WireCodecs.STRING.encode(output, literal.name());
-                    else if (node.stub() instanceof CommandNode.Argument argument) {
+                    else if (node.stub() instanceof CommandNode.Argument<A> argument) {
                         WireCodecs.STRING.encode(output, argument.name());
                         int id = argument.argument().type();
                         var codec = codecs.get(id);
                         if (codec == null) throw new IllegalArgumentException("Unknown command argument ID " + id);
                         WireCodecs.VAR_INT.encode(output, id);
-                        write(codec, output, argument.argument().value());
+                        codec.encode(output, argument.argument());
                         if (argument.suggestion() != null) WireCodecs.IDENTIFIER.encode(output, argument.suggestion());
                     }
                 });
     }
 
-    @SuppressWarnings("unchecked")
-    private static void write(PacketCodec<?> codec, io.netty.buffer.ByteBuf output, Object value) {
-        ((PacketCodec<Object>) codec).encode(output, value);
-    }
-
-    public static void validate(List<CommandNode> nodes) {
+    public static void validate(List<? extends CommandNode<?>> nodes) {
         validate(nodes, true);
         validate(nodes, false);
     }
 
-    private static void validate(List<CommandNode> nodes, boolean redirects) {
+    private static void validate(List<? extends CommandNode<?>> nodes, boolean redirects) {
         int size = nodes.size();
         int[] pending = new int[size];
         List<List<Integer>> dependents = new ArrayList<>(size);

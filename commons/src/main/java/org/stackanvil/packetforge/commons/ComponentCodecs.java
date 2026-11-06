@@ -8,6 +8,25 @@ import java.util.LinkedHashSet;
 public final class ComponentCodecs {
     private ComponentCodecs() {}
 
+    public static PacketCodec<DataComponent<?>> component(Iterable<DataComponentType<?>> types) {
+        var table = new LinkedHashMap<Integer, DataComponentType<?>>();
+        for (var type : types)
+            if (table.putIfAbsent(type.id(), type) != null)
+                throw new IllegalArgumentException("Duplicate component ID");
+        return WireCodecs.of(
+                input -> {
+                    int id = WireCodecs.VAR_INT.decode(input);
+                    var type = table.get(id);
+                    if (type == null) throw new IllegalArgumentException("Unknown component ID: " + id);
+                    return decode(type, input, false);
+                },
+                (output, value) -> {
+                    requireType(table, value.type());
+                    WireCodecs.VAR_INT.encode(output, value.type().id());
+                    value.encode(output, false);
+                });
+    }
+
     public static PacketCodec<ComponentPatch> patch(Iterable<DataComponentType<?>> types, boolean delimited) {
         var table = new LinkedHashMap<Integer, DataComponentType<?>>();
         for (var type : types)

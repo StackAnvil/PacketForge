@@ -21,6 +21,7 @@ import org.stackanvil.packetforge.protocol.packet.configuration.ClientboundFinis
 import org.stackanvil.packetforge.protocol.packet.game.*;
 import org.stackanvil.packetforge.protocol.packet.login.ServerboundHelloPacket;
 import org.stackanvil.packetforge.protocol.packet.ping.ServerboundPingRequestPacket;
+import org.stackanvil.packetforge.protocol.payload.*;
 import org.stackanvil.packetforge.protocol.type.world.waypoints.*;
 
 /** The generator stays static. Only this test loads vanilla in an isolated class loader. */
@@ -84,16 +85,13 @@ class VanillaCompatibilityTest {
                 new ClientboundSetPlayerTeamPacket(
                         (byte) 3, "team", List.of("player", "café"), java.util.Optional.empty()),
                 new ClientboundSetPlayerTeamPacket((byte) 4, "team", List.of("player"), java.util.Optional.empty())));
-        List<Variant<TrackedWaypoint_Type>> waypointContents = List.of(
-                new Variant<>(TrackedWaypoint_Type.EMPTY, Unit.INSTANCE),
-                new Variant<>(
-                        TrackedWaypoint_Type.VEC3I,
-                        new TrackedWaypoint_Vec3iWaypoint_Contents(
-                                new IntVector3(Integer.MIN_VALUE, -1, Integer.MAX_VALUE))),
-                new Variant<>(
-                        TrackedWaypoint_Type.CHUNK,
+        List<TrackedWaypointTypePayload> waypointContents = List.of(
+                new TrackedWaypointTypePayload.Empty(),
+                new TrackedWaypointTypePayload.Vec3i(new TrackedWaypoint_Vec3iWaypoint_Contents(
+                        new IntVector3(Integer.MIN_VALUE, -1, Integer.MAX_VALUE))),
+                new TrackedWaypointTypePayload.Chunk(
                         new TrackedWaypoint_ChunkWaypoint_Contents(new ChunkPosition(-12345, 67890))),
-                new Variant<>(TrackedWaypoint_Type.AZIMUTH, new TrackedWaypoint_AzimuthWaypoint_Contents(-3.1415927f)));
+                new TrackedWaypointTypePayload.Azimuth(new TrackedWaypoint_AzimuthWaypoint_Contents(-3.1415927f)));
         for (var operation : ClientboundTrackedWaypointPacket_Operation.values())
             for (var contents : waypointContents)
                 for (boolean named : new boolean[] {false, true}) {
@@ -115,7 +113,8 @@ class VanillaCompatibilityTest {
         for (int bits = 0; bits < 256; bits++)
             for (int variant = 0; variant < 3; variant++) {
                 var actions = java.util.EnumSet.noneOf(ClientboundPlayerInfoUpdatePacket_Action.class);
-                var values = new java.util.EnumMap<ClientboundPlayerInfoUpdatePacket_Action, Object>(
+                var values = new java.util.EnumMap<
+                        ClientboundPlayerInfoUpdatePacket_Action, ClientboundPlayerInfoUpdateActionPayload>(
                         ClientboundPlayerInfoUpdatePacket_Action.class);
                 for (var branchValue : actionTable.getAsJsonArray("cases")) {
                     var branch = branchValue.getAsJsonObject();
@@ -124,14 +123,16 @@ class VanillaCompatibilityTest {
                     if ((bits & 1 << action.ordinal()) == 0) continue;
                     actions.add(action);
                     var schema = branch.getAsJsonObject("value");
-                    values.put(
-                            action,
+                    values.put(action, (ClientboundPlayerInfoUpdateActionPayload) GeneratedRoundTripTest.payload(
+                            actionTable,
+                            action.name(),
                             GeneratedRoundTripTest.sample(
                                     GeneratedRoundTripTest.type(
                                             schema.get("type").getAsString()),
                                     schema.get("shape").getAsString(),
                                     variant,
-                                    models));
+                                    models),
+                            models));
                 }
                 samples.add(new ClientboundPlayerInfoUpdatePacket(
                         actions,
@@ -152,25 +153,32 @@ class VanillaCompatibilityTest {
                             schema.get("shape").getAsString(),
                             variant,
                             models);
-                    var argument = new CommandNode.Argument(
+                    var argument = new CommandNode.Argument<ArgumentTypeInfosPayload>(
                             "argument café",
-                            new Variant<>(branch.get("key").getAsInt(), value),
+                            (ArgumentTypeInfosPayload) GeneratedRoundTripTest.payload(
+                                    arguments, branch.get("key").getAsString(), value, models),
                             suggestions ? Key.key("minecraft:ask_server") : null);
                     samples.add(new ClientboundCommandsPacket(
                             List.of(
-                                    new CommandNode(0, new int[] {1}, 0, null),
-                                    new CommandNode(46 | (suggestions ? 16 : 0), new int[0], 2, argument),
-                                    new CommandNode(1, new int[0], 0, new CommandNode.Literal("literal"))),
+                                    new CommandNode<ArgumentTypeInfosPayload>(0, new int[] {1}, 0, null),
+                                    new CommandNode<ArgumentTypeInfosPayload>(
+                                            46 | (suggestions ? 16 : 0), new int[0], 2, argument),
+                                    new CommandNode<ArgumentTypeInfosPayload>(
+                                            1,
+                                            new int[0],
+                                            0,
+                                            new CommandNode.Literal<ArgumentTypeInfosPayload>("literal"))),
                             0));
                 }
         for (int flags = 0; flags < 256; flags++) {
-            CommandNode.Stub stub = (flags & 3) == 2
-                    ? new CommandNode.Argument(
+            CommandNode.Stub<ArgumentTypeInfosPayload> stub = (flags & 3) == 2
+                    ? new CommandNode.Argument<ArgumentTypeInfosPayload>(
                             "argument",
-                            new Variant<>(0, Unit.INSTANCE),
+                            new ArgumentTypeInfosPayload.BrigadierBool(),
                             (flags & 16) != 0 ? Key.key("minecraft:ask_server") : null)
-                    : (flags & 3) == 1 ? new CommandNode.Literal("literal") : null;
-            samples.add(new ClientboundCommandsPacket(List.of(new CommandNode(flags, new int[0], 9, stub)), 0));
+                    : (flags & 3) == 1 ? new CommandNode.Literal<ArgumentTypeInfosPayload>("literal") : null;
+            samples.add(new ClientboundCommandsPacket(
+                    List.of(new CommandNode<ArgumentTypeInfosPayload>(flags, new int[0], 9, stub)), 0));
         }
         for (var entry : GeneratedProtocol.registry().entries().values()) {
             for (int variant = 0; variant < 3; variant++)
@@ -460,7 +468,7 @@ class VanillaCompatibilityTest {
                     ByteBuf buffer = Unpooled.buffer();
                     byte[] expected;
                     try {
-                        generated.encode(buffer, new Variant<>(key, value));
+                        generated.encode(buffer, GeneratedRoundTripTest.payload(dispatch, keyName, value, models));
                         expected = new byte[buffer.readableBytes()];
                         buffer.readBytes(expected);
                     } finally {

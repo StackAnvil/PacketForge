@@ -9,35 +9,86 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class DiscriminatorCodecsTest {
+    sealed interface Value extends TypedPayload<Integer> permits Stop, Text, Nested, Unknown {}
+
+    record Stop() implements Value {
+        public Integer type() {
+            return 0;
+        }
+    }
+
+    record Text(String value) implements Value {
+        public Integer type() {
+            return 1;
+        }
+    }
+
+    record Nested(Value value) implements Value {
+        public Integer type() {
+            return 1;
+        }
+    }
+
+    record Unknown() implements Value {
+        public Integer type() {
+            return 99;
+        }
+    }
+
     @Test
     void dispatchesPayloadsAndRejectsUnknownDiscriminators() {
         var codec = WireCodecs.dispatch(
-                WireCodecs.VAR_INT, Map.of(0, WireCodecs.UNIT, 1, WireCodecs.STRING, 2, WireCodecs.INT));
+                WireCodecs.VAR_INT,
+                Map.<Integer, PacketCodec<Value>>of(
+                        0,
+                        WireCodecs.mapped(WireCodecs.UNIT, ignored -> new Stop(), ignored -> Unit.INSTANCE),
+                        1,
+                        WireCodecs.mapped(WireCodecs.STRING, Text::new, v -> ((Text) v).value())));
         var buffer = Unpooled.buffer();
         try {
-            codec.encode(buffer, new Variant<>(1, "x"));
-            assertEquals(new Variant<>(1, "x"), codec.decode(buffer));
-            codec.encode(buffer, new Variant<>(0, Unit.INSTANCE));
+            codec.encode(buffer, new Text("x"));
+            assertEquals(new Text("x"), codec.decode(buffer));
+            codec.encode(buffer, new Stop());
             assertEquals(0, buffer.readUnsignedByte());
             buffer.clear().writeByte(99);
             assertThrows(IllegalArgumentException.class, () -> codec.decode(buffer));
-            assertThrows(IllegalArgumentException.class, () -> codec.encode(buffer, new Variant<>(99, Unit.INSTANCE)));
+            assertThrows(IllegalArgumentException.class, () -> codec.encode(buffer, new Unknown()));
         } finally {
             buffer.release();
         }
     }
 
     @Test
+    void rejectsAPayloadDecodedByTheWrongDiscriminatorSchema() {
+        var codec = WireCodecs.dispatch(
+                WireCodecs.VAR_INT,
+                Map.<Integer, PacketCodec<Value>>of(
+                        0, WireCodecs.mapped(WireCodecs.STRING, Text::new, value -> ((Text) value).value())));
+        var input = Unpooled.wrappedBuffer(new byte[] {0, 1, 'x'});
+        try {
+            assertThrows(IllegalArgumentException.class, () -> codec.decode(input));
+        } finally {
+            input.release();
+        }
+    }
+
+    @Test
     void resolvesRecursiveTablesOnceAndRoundTripsNestedValues() {
-        AtomicReference<PacketCodec<Variant<Integer>>> reference = new AtomicReference<>();
+        AtomicReference<PacketCodec<Value>> reference = new AtomicReference<>();
         AtomicInteger initialized = new AtomicInteger();
-        PacketCodec<Variant<Integer>> codec = WireCodecs.lazy(() -> {
+        PacketCodec<Value> codec = WireCodecs.lazy(() -> {
             initialized.incrementAndGet();
-            return WireCodecs.dispatch(WireCodecs.VAR_INT, Map.of(0, WireCodecs.UNIT, 1, reference.get()));
+            return WireCodecs.dispatch(
+                    WireCodecs.VAR_INT,
+                    Map.<Integer, PacketCodec<Value>>of(
+                            0,
+                            WireCodecs.mapped(WireCodecs.UNIT, ignored -> new Stop(), ignored -> Unit.INSTANCE),
+                            1,
+                            WireCodecs.mapped(reference.get(), Nested::new, v -> ((Nested) v).value())));
         });
         reference.set(codec);
         assertEquals(0, initialized.get());
-        var value = new Variant<>(1, new Variant<>(1, new Variant<>(0, Unit.INSTANCE)));
+        var value = new Nested(new Nested(new Stop()));
         var buffer = Unpooled.buffer();
         try {
             codec.encode(buffer, value);

@@ -87,18 +87,28 @@ class DataComponentTypesTest {
     }
 
     @Test
-    void generatedKeysRejectIncompatibleValuesDuringJavaCompilation() throws Exception {
+    void publicApiRejectsIncompatibleValuesDuringJavaCompilation() throws Exception {
         String source = """
                 import org.stackanvil.packetforge.protocol.DataComponentTypes;
                 import org.stackanvil.packetforge.commons.ComponentPatch;
                 import net.kyori.adventure.text.Component;
                 import net.kyori.adventure.key.Key;
                 import org.stackanvil.packetforge.protocol.packet.game.ClientboundCooldownPacket;
+                import org.stackanvil.packetforge.protocol.payload.*;
+                import org.stackanvil.packetforge.commons.CommandNode;
                 class Client {
                     ComponentPatch patch = ComponentPatch.builder().set(DataComponentTypes.DAMAGE, 12).build();
                     int damage = patch.get(DataComponentTypes.DAMAGE).orElseThrow();
                     ComponentPatch named = ComponentPatch.builder().set(DataComponentTypes.CUSTOM_NAME, Component.text("name")).build();
                     ClientboundCooldownPacket cooldown = new ClientboundCooldownPacket(Key.key("test:cooldown"), 20);
+                    CommandNode.Argument<ArgumentTypeInfosPayload> argument = new CommandNode.Argument<>("argument", new ArgumentTypeInfosPayload.BrigadierBool(), null);
+                    EntityDataSerializersPayload metadata = new EntityDataSerializersPayload.Byte((byte) 1);
+                    String describe(SlotDisplayPayload display) {
+                        return switch (display) {
+                            case SlotDisplayPayload.Empty empty -> "empty";
+                            default -> "value";
+                        };
+                    }
                 }
                 """;
         assertTrue(compile(source));
@@ -106,6 +116,11 @@ class DataComponentTypesTest {
         assertFalse(compile(source.replace(
                 "Component.text(\"name\")", "new org.stackanvil.packetforge.commons.NbtTag.StringValue(\"name\")")));
         assertFalse(compile(source.replace("Key.key(\"test:cooldown\")", "\"test:cooldown\"")));
+        assertFalse(compile(
+                source.replace("new ArgumentTypeInfosPayload.BrigadierBool()", "new ParticleTypesPayload.Flame()")));
+        assertFalse(compile(source.replace(
+                "new EntityDataSerializersPayload.Byte((byte) 1)",
+                "new EntityDataSerializersPayload.Byte(\"wrong\")")));
     }
 
     private boolean compile(String source) throws Exception {

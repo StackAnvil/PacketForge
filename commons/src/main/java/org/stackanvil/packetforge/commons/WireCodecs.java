@@ -72,40 +72,25 @@ public final class WireCodecs {
         };
     }
 
-    public static <K> PacketCodec<Variant<K>> dispatch(PacketCodec<K> key, Map<K, PacketCodec<?>> cases) {
-        Map<K, PacketCodec<?>> table = Map.copyOf(cases);
-        return of(
-                b -> {
-                    K type = key.decode(b);
-                    PacketCodec<?> codec = table.get(type);
-                    if (codec == null) throw new IllegalArgumentException("Unknown codec discriminator: " + type);
-                    return new Variant<>(type, codec.decode(b));
-                },
-                (b, value) -> {
-                    @SuppressWarnings("unchecked")
-                    PacketCodec<Object> codec = (PacketCodec<Object>) table.get(value.type());
-                    if (codec == null)
-                        throw new IllegalArgumentException("Unknown codec discriminator: " + value.type());
-                    key.encode(b, value.type());
-                    codec.encode(b, value.value());
-                });
-    }
-
-    public static <K> PacketCodec<Variant<K>> dispatchWithFallback(
-            PacketCodec<K> key, Map<K, PacketCodec<?>> cases, PacketCodec<byte[]> fallback) {
-        Map<K, PacketCodec<?>> table = Map.copyOf(cases);
+    public static <K, T extends TypedPayload<K>> PacketCodec<T> dispatch(
+            PacketCodec<K> key, Map<K, PacketCodec<T>> cases) {
+        Map<K, PacketCodec<T>> table = Map.copyOf(cases);
         return of(
                 input -> {
-                    K id = key.decode(input);
-                    PacketCodec<?> codec = table.get(id);
-                    return new Variant<>(id, codec == null ? fallback.decode(input) : codec.decode(input));
+                    K type = key.decode(input);
+                    PacketCodec<T> codec = table.get(type);
+                    if (codec == null) throw new IllegalArgumentException("Unknown codec discriminator: " + type);
+                    T value = codec.decode(input);
+                    if (!java.util.Objects.equals(type, value.type()))
+                        throw new IllegalArgumentException("Payload discriminator does not match its codec");
+                    return value;
                 },
                 (output, value) -> {
+                    PacketCodec<T> codec = table.get(value.type());
+                    if (codec == null)
+                        throw new IllegalArgumentException("Unknown codec discriminator: " + value.type());
                     key.encode(output, value.type());
-                    @SuppressWarnings("unchecked")
-                    PacketCodec<Object> codec = (PacketCodec<Object>) table.get(value.type());
-                    if (codec == null) fallback.encode(output, (byte[]) value.value());
-                    else codec.encode(output, value.value());
+                    codec.encode(output, value);
                 });
     }
 

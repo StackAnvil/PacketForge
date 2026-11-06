@@ -75,6 +75,9 @@ class GeneratedRoundTripTest {
                     var object = model.getAsJsonObject();
                     models.put(object.get("generatedName").getAsString(), object);
                 }
+                for (var entry : report.getAsJsonObject("payloadTypes").entrySet()) {
+                    models.put("$payload:" + entry.getKey(), entry.getValue().getAsJsonObject());
+                }
                 for (var dispatch : report.getAsJsonArray("dispatches")) {
                     var object = dispatch.getAsJsonObject();
                     models.put("$dispatch:" + object.get("name").getAsString(), object);
@@ -82,6 +85,24 @@ class GeneratedRoundTripTest {
             }
         }
         return models;
+    }
+
+    static Object payload(JsonObject dispatch, String key, Object value, Map<String, JsonObject> models)
+            throws Exception {
+        if (dispatch.get("registry").getAsString().equals("DATA_COMPONENT_TYPE"))
+            return DataComponentType.class
+                    .getMethod("withValue", Object.class)
+                    .invoke(DataComponentTypes.byId(Integer.parseInt(key)), value);
+        String name = models.get("$payload:" + dispatch.get("name").getAsString())
+                .getAsJsonObject("cases")
+                .get(key)
+                .getAsString();
+        int separator = name.lastIndexOf('.');
+        var type = Class.forName(name.substring(0, separator) + "$" + name.substring(separator + 1));
+        var components = type.getRecordComponents();
+        return components.length == 0
+                ? type.getConstructor().newInstance()
+                : type.getConstructor(components[0].getType()).newInstance(value);
     }
 
     static Type type(String name) throws ClassNotFoundException {
@@ -109,6 +130,7 @@ class GeneratedRoundTripTest {
             return java.lang.reflect.Array.newInstance((Class<?>) type(name.substring(0, name.length() - 2)), 0)
                     .getClass();
         return switch (name) {
+            case "?" -> Object.class;
             case "boolean" -> boolean.class;
             case "byte" -> byte.class;
             case "short" -> short.class;
@@ -185,12 +207,39 @@ class GeneratedRoundTripTest {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    private static MetadataEntry<?> metadataSample(Type type, String shape, int variant, Map<String, JsonObject> models)
+            throws Exception {
+        String payloadShape = shape.startsWith("metadata<") ? innerShapes(shape).getFirst() : shape;
+        return new MetadataEntry<>(variant, (TypedPayload<Integer>) sample(type, payloadShape, variant, models));
+    }
+
     private static Object sampleValue(Type type, String shape, int variant, Map<String, JsonObject> models)
             throws Exception {
         if (shape.startsWith("length(")) shape = shape.substring(shape.indexOf('<') + 1, shape.length() - 1);
         if (shape.startsWith("nullable<")) {
             if (variant == 0) return null;
             shape = shape.substring("nullable<".length(), shape.length() - 1);
+        }
+        if (type instanceof ParameterizedType carrier) {
+            if (carrier.getRawType() == CommandNode.class) return new CommandNode<>(0, new int[0], 0, null);
+            if (carrier.getRawType() == MetadataEntry.class)
+                return metadataSample(carrier.getActualTypeArguments()[0], shape, variant, models);
+        }
+        if (shape.startsWith("dispatch:")) {
+            var dispatch = models.get("$" + shape);
+            if (dispatch == null) throw new IllegalArgumentException("Missing dispatch metadata: " + shape);
+            var cases = new java.util.ArrayList<JsonObject>();
+            for (var candidate : dispatch.getAsJsonArray("cases")) {
+                var branch = candidate.getAsJsonObject();
+                if (!branch.getAsJsonObject("value").get("shape").getAsString().startsWith("REJECTED:"))
+                    cases.add(branch);
+            }
+            var branch = cases.get(variant % cases.size());
+            var schema = branch.getAsJsonObject("value");
+            Object value = sample(
+                    type(schema.get("type").getAsString()), schema.get("shape").getAsString(), variant, models);
+            return payload(dispatch, branch.get("key").getAsString(), value, models);
         }
         if (type instanceof ParameterizedType parameterized) {
             Type[] arguments = parameterized.getActualTypeArguments();
@@ -214,29 +263,6 @@ class GeneratedRoundTripTest {
                         : Map.of(
                                 sample(arguments[0], inner, variant, models),
                                 sample(arguments[1], innerShapes.get(1), variant, models));
-            if (parameterized.getRawType() == Variant.class) {
-                var dispatch = models.get("$" + shape);
-                if (dispatch == null) throw new IllegalArgumentException("Missing dispatch metadata: " + shape);
-                var cases = new java.util.ArrayList<com.google.gson.JsonObject>();
-                for (var candidate : dispatch.getAsJsonArray("cases"))
-                    if (!candidate
-                            .getAsJsonObject()
-                            .getAsJsonObject("value")
-                            .get("shape")
-                            .getAsString()
-                            .startsWith("REJECTED:")) cases.add(candidate.getAsJsonObject());
-                var branch = cases.get(variant % cases.size());
-                String keyName = branch.get("key").getAsString();
-                Object key = dispatchKey(arguments[0], keyName);
-                var value = branch.getAsJsonObject("value");
-                return new Variant<>(
-                        key,
-                        sample(
-                                type(value.get("type").getAsString()),
-                                value.get("shape").getAsString(),
-                                variant,
-                                models));
-            }
             if (parameterized.getRawType() == RegistryValue.class)
                 return variant == 1
                         ? new RegistryValue.Direct<>(sample(arguments[0], inner, variant, models))
@@ -248,12 +274,6 @@ class GeneratedRoundTripTest {
             throw new IllegalArgumentException("Unrecognized generic type: " + type);
         }
         Class<?> clazz = (Class<?>) type;
-        if (clazz == MetadataEntry.class) {
-            @SuppressWarnings("unchecked")
-            Variant<Integer> value = (Variant<Integer>)
-                    sample(type("org.stackanvil.packetforge.commons.Variant<Integer>"), shape, variant, models);
-            return new MetadataEntry(variant, value);
-        }
         if (clazz == HolderSet.class) return new HolderSet.Direct(variant == 0 ? List.of() : List.of(1));
         if (clazz == ComponentPatch.class)
             return variant == 0
@@ -327,7 +347,6 @@ class GeneratedRoundTripTest {
         if (clazz == FloatVector3.class) return new FloatVector3(variant, -variant, variant * 2);
         if (clazz == Quaternion.class) return new Quaternion(variant, -variant, variant, 1);
         if (clazz == ChunkPosition.class) return new ChunkPosition(-variant, variant);
-        if (clazz == CommandNode.class) return new CommandNode(0, new int[0], 0, null);
         if (clazz == UUID.class) return new UUID(variant, -variant);
         if (clazz == BlockPosition.class) return new BlockPosition(-variant, variant, variant);
         if (clazz.isEnum()) {

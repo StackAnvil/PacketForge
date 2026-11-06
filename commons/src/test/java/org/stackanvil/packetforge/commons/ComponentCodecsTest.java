@@ -17,6 +17,27 @@ class ComponentCodecsTest {
     private static final List<DataComponentType<?>> SCHEMAS = List.of(NUMBER, TEXT, FLAG);
 
     @Test
+    void standaloneComponentsRetainTypedKeysAndRejectUnknownOrForeignIdentities() {
+        var codec = ComponentCodecs.component(SCHEMAS);
+        var buffer = Unpooled.buffer();
+        try {
+            codec.encode(buffer, NUMBER.withValue(42));
+            codec.encode(buffer, TEXT.withValue("text"));
+            assertEquals(NUMBER.withValue(42), codec.decode(buffer));
+            assertEquals(TEXT.withValue("text"), codec.decode(buffer));
+            assertFalse(buffer.isReadable());
+            var foreign = new DataComponentType<>(0, Key.key("test:foreign"), WireCodecs.STRING);
+            assertThrows(IllegalArgumentException.class, () -> codec.encode(buffer, foreign.withValue("wrong codec")));
+            assertFalse(buffer.isReadable());
+            buffer.writeByte(99);
+            assertThrows(IllegalArgumentException.class, () -> codec.decode(buffer));
+        } finally {
+            buffer.release();
+        }
+        assertThrows(IllegalArgumentException.class, () -> ComponentCodecs.component(List.of(NUMBER, NUMBER)));
+    }
+
+    @Test
     void encodesAddedAndRemovedComponentsWithOptionalPayloadDelimiters() {
         var value = ComponentPatch.builder().set(NUMBER, 42).remove(TEXT).build();
         for (boolean delimited : new boolean[] {false, true}) {

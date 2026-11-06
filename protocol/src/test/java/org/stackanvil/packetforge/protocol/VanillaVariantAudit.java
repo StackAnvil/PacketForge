@@ -14,6 +14,7 @@ import org.stackanvil.packetforge.commons.*;
 import org.stackanvil.packetforge.protocol.packet.game.ServerboundCommandSuggestionPacket;
 import org.stackanvil.packetforge.protocol.packet.game.ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC;
 import org.stackanvil.packetforge.protocol.packet.game.ServerboundSetCreativeModeSlotPacket;
+import org.stackanvil.packetforge.protocol.payload.ArgumentTypeInfosPayload;
 
 /** Differential checks for context policies, command layouts, and intentionally discarded data. */
 final class VanillaVariantAudit {
@@ -77,19 +78,24 @@ final class VanillaVariantAudit {
                 (PacketCodec<Object>) Class.forName(name).getField("CODEC").get(null);
         Object source = source(models.get(name));
         var trees = java.util.List.of(
-                java.util.List.<CommandNode>of(),
-                java.util.List.of(new CommandNode(0, new int[] {-1, 9}, 0, null)),
-                java.util.List.of(new CommandNode(0, new int[] {1}, 0, null), new CommandNode(8, new int[0], 0, null)),
-                java.util.List.of(new CommandNode(0, new int[] {0}, 0, null)),
-                java.util.List.of(new CommandNode(8, new int[0], 0, null)),
+                java.util.List.<CommandNode<ArgumentTypeInfosPayload>>of(),
+                java.util.List.of(new CommandNode<ArgumentTypeInfosPayload>(0, new int[] {-1, 9}, 0, null)),
                 java.util.List.of(
-                        new CommandNode(0, new int[] {1}, 0, null), new CommandNode(0, new int[] {0}, 0, null)),
-                java.util.List.of(new CommandNode(8, new int[0], 1, null), new CommandNode(8, new int[0], 0, null)));
+                        new CommandNode<ArgumentTypeInfosPayload>(0, new int[] {1}, 0, null),
+                        new CommandNode<ArgumentTypeInfosPayload>(8, new int[0], 0, null)),
+                java.util.List.of(new CommandNode<ArgumentTypeInfosPayload>(0, new int[] {0}, 0, null)),
+                java.util.List.of(new CommandNode<ArgumentTypeInfosPayload>(8, new int[0], 0, null)),
+                java.util.List.of(
+                        new CommandNode<ArgumentTypeInfosPayload>(0, new int[] {1}, 0, null),
+                        new CommandNode<ArgumentTypeInfosPayload>(0, new int[] {0}, 0, null)),
+                java.util.List.of(
+                        new CommandNode<ArgumentTypeInfosPayload>(8, new int[0], 1, null),
+                        new CommandNode<ArgumentTypeInfosPayload>(8, new int[0], 0, null)));
         for (int index = 0; index < trees.size(); index++) {
             ByteBuf buffer = Unpooled.buffer();
             byte[] bytes;
             try {
-                WireCodecs.list(CommandTreeCodecs.node(Map.of()), Integer.MAX_VALUE)
+                WireCodecs.list(CommandTreeCodecs.<ArgumentTypeInfosPayload>node(Map.of()), Integer.MAX_VALUE)
                         .encode(buffer, trees.get(index));
                 WireCodecs.VAR_INT.encode(buffer, -1);
                 bytes = new byte[buffer.readableBytes()];
@@ -465,7 +471,11 @@ final class VanillaVariantAudit {
             for (int length : new int[] {0, 1, maximum, maximum + 1}) {
                 byte[] data = new byte[length];
                 Arrays.fill(data, (byte) 0xa5);
-                var value = new Variant<>(channel, data);
+                Class<?> unknown = Class.forName(models.get("$payload:" + name)
+                        .get("fallbackType")
+                        .getAsString()
+                        .replaceFirst("\\.Unknown$", "\\$Unknown"));
+                var value = unknown.getConstructor(Key.class, byte[].class).newInstance(channel, data);
                 ByteBuf raw = Unpooled.buffer();
                 byte[] bytes;
                 try {
@@ -491,9 +501,10 @@ final class VanillaVariantAudit {
                 assertArrayEquals(bytes, body(generated, value));
                 ByteBuf input = Unpooled.wrappedBuffer(bytes);
                 try {
-                    var parsed = (Variant<?>) generated.decode(input);
+                    var parsed = (TypedPayload<?>) generated.decode(input);
                     assertEquals(channel, parsed.type());
-                    assertArrayEquals(data, (byte[]) parsed.value());
+                    assertArrayEquals(
+                            data, (byte[]) parsed.getClass().getMethod("data").invoke(parsed));
                     assertFalse(input.isReadable());
                 } finally {
                     input.release();
@@ -525,8 +536,9 @@ final class VanillaVariantAudit {
             Class<?> brand = (Class<?>) GeneratedRoundTripTest.type(
                     branch.getAsJsonObject("value").get("type").getAsString());
             Object payload = brand.getConstructor(String.class).newInstance("é".repeat(30000));
-            byte[] bytes =
-                    body(generated, new Variant<>(Key.key(branch.get("key").getAsString()), payload));
+            byte[] bytes = body(
+                    generated,
+                    GeneratedRoundTripTest.payload(definition, branch.get("key").getAsString(), payload, models));
             assertArrayEquals(bytes, sourceEncode(source, sourceDecode(source, bytes)));
             compared++;
         }

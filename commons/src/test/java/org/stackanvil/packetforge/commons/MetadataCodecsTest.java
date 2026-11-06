@@ -8,13 +8,33 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class MetadataCodecsTest {
-    private static final PacketCodec<List<MetadataEntry>> CODEC = MetadataCodecs.entries(
-            WireCodecs.dispatch(WireCodecs.VAR_INT, Map.of(0, WireCodecs.BYTE, 1, WireCodecs.STRING)));
+    sealed interface Value extends TypedPayload<Integer> permits ByteValue, TextValue {}
+
+    record ByteValue(byte value) implements Value {
+        public Integer type() {
+            return 0;
+        }
+    }
+
+    record TextValue(String value) implements Value {
+        public Integer type() {
+            return 1;
+        }
+    }
+
+    private static final PacketCodec<List<MetadataEntry<Value>>> CODEC = MetadataCodecs.entries(WireCodecs.dispatch(
+            WireCodecs.VAR_INT,
+            Map.<Integer, PacketCodec<Value>>of(
+                    0,
+                    WireCodecs.mapped(WireCodecs.BYTE, ByteValue::new, v -> ((ByteValue) v).value()),
+                    1,
+                    WireCodecs.mapped(WireCodecs.STRING, TextValue::new, v -> ((TextValue) v).value()))));
 
     @Test
     void sentinelOnlyTerminatesTheIndexAndPreservesFollowingBytes() {
         var values = List.of(
-                new MetadataEntry(254, new Variant<>(0, (byte) -1)), new MetadataEntry(0, new Variant<>(1, "x")));
+                new MetadataEntry<Value>(254, new ByteValue((byte) -1)),
+                new MetadataEntry<Value>(0, new TextValue("x")));
         var buffer = Unpooled.buffer();
         try {
             CODEC.encode(buffer, values);
@@ -41,6 +61,6 @@ class MetadataCodecsTest {
                 input.release();
             }
         }
-        assertThrows(IllegalArgumentException.class, () -> new MetadataEntry(255, new Variant<>(0, (byte) 0)));
+        assertThrows(IllegalArgumentException.class, () -> new MetadataEntry<>(255, new ByteValue((byte) 0)));
     }
 }

@@ -8,15 +8,16 @@ import java.util.List;
 public final class MetadataCodecs {
     private MetadataCodecs() {}
 
-    public static PacketCodec<List<MetadataEntry>> entries(PacketCodec<Variant<Integer>> serializers) {
+    public static <T extends TypedPayload<Integer>> PacketCodec<List<MetadataEntry<T>>> entries(
+            PacketCodec<T> serializers) {
         return WireCodecs.of(
                 input -> {
-                    List<MetadataEntry> values = new ArrayList<>();
+                    List<MetadataEntry<T>> values = new ArrayList<>();
                     var indices = new HashSet<Integer>();
                     for (int index; (index = input.readUnsignedByte()) != 255; ) {
                         if (!indices.add(index))
                             throw new IllegalArgumentException("Repeated metadata index: " + index);
-                        values.add(new MetadataEntry(index, serializers.decode(input)));
+                        values.add(new MetadataEntry<>(index, serializers.decode(input)));
                     }
                     return List.copyOf(values);
                 },

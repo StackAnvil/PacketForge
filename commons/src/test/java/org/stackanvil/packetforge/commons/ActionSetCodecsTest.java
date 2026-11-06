@@ -13,6 +13,26 @@ class ActionSetCodecsTest {
         C
     }
 
+    sealed interface Value extends TypedPayload<Action> permits NumberValue, FlagValue, TextValue {}
+
+    record NumberValue(int value) implements Value {
+        public Action type() {
+            return Action.A;
+        }
+    }
+
+    record FlagValue(boolean value) implements Value {
+        public Action type() {
+            return Action.B;
+        }
+    }
+
+    record TextValue(String value) implements Value {
+        public Action type() {
+            return Action.C;
+        }
+    }
+
     enum Wide {
         A,
         B,
@@ -24,6 +44,13 @@ class ActionSetCodecsTest {
         H,
         I,
         J
+    }
+
+    @Test
+    void rejectsAnActionKeyThatDoesNotMatchItsPayload() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ActionEntry<>(new UUID(1, 2), Map.of(Action.A, new TextValue("wrong action"))));
     }
 
     @Test
@@ -50,10 +77,20 @@ class ActionSetCodecsTest {
 
     @Test
     void entriesFollowOrdinalOrderRegardlessOfMapOrderAndIgnoreUnselectedValues() {
-        var schemas = Map.<Action, PacketCodec<?>>of(
-                Action.A, WireCodecs.VAR_INT, Action.B, WireCodecs.BOOL, Action.C, WireCodecs.STRING);
+        var schemas = Map.<Action, PacketCodec<Value>>of(
+                Action.A, WireCodecs.mapped(WireCodecs.VAR_INT, NumberValue::new, v -> ((NumberValue) v).value()),
+                Action.B, WireCodecs.mapped(WireCodecs.BOOL, FlagValue::new, v -> ((FlagValue) v).value()),
+                Action.C, WireCodecs.mapped(WireCodecs.STRING, TextValue::new, v -> ((TextValue) v).value()));
         UUID id = new UUID(Long.MIN_VALUE, Long.MAX_VALUE);
-        var entry = new ActionEntry<>(id, Map.of(Action.C, "café", Action.A, 128, Action.B, true));
+        var entry = new ActionEntry<>(
+                id,
+                Map.<Action, Value>of(
+                        Action.C,
+                        new TextValue("café"),
+                        Action.A,
+                        new NumberValue(128),
+                        Action.B,
+                        new FlagValue(true)));
         var codec = ActionSetCodecs.entry(Set.of(Action.C, Action.A), schemas);
         var bytes = Unpooled.buffer();
         try {
@@ -64,12 +101,16 @@ class ActionSetCodecsTest {
             assertFalse(bytes.isReadable());
             bytes.clear();
             codec.encode(bytes, entry);
-            assertEquals(new ActionEntry<>(id, Map.of(Action.A, 128, Action.C, "café")), codec.decode(bytes));
+            assertEquals(
+                    new ActionEntry<>(
+                            id, Map.<Action, Value>of(Action.A, new NumberValue(128), Action.C, new TextValue("café"))),
+                    codec.decode(bytes));
             assertFalse(bytes.isReadable());
             bytes.clear();
             assertThrows(
                     IllegalArgumentException.class,
-                    () -> codec.encode(bytes, new ActionEntry<>(id, Map.of(Action.A, 1))));
+                    () -> codec.encode(
+                            bytes, new ActionEntry<>(id, Map.<Action, Value>of(Action.A, new NumberValue(1)))));
             assertFalse(bytes.isReadable());
             bytes.writeZero(15);
             assertThrows(IndexOutOfBoundsException.class, () -> codec.decode(bytes));
@@ -78,6 +119,6 @@ class ActionSetCodecsTest {
         }
         assertThrows(
                 IllegalArgumentException.class,
-                () -> ActionSetCodecs.entry(Set.of(Action.B), Map.of(Action.A, WireCodecs.VAR_INT)));
+                () -> ActionSetCodecs.entry(Set.of(Action.B), Map.of(Action.A, schemas.get(Action.A))));
     }
 }

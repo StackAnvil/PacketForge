@@ -9,18 +9,25 @@ import net.kyori.adventure.key.Key;
 import org.junit.jupiter.api.Test;
 
 class CommandTreeCodecsTest {
+    record ArgumentValue(int value) implements TypedPayload<Integer> {
+        public Integer type() {
+            return 123;
+        }
+    }
+
     @Test
     void nodesRetainFlagsReferencesAndTypedPayloads() {
-        var codec = CommandTreeCodecs.node(Map.of(123, WireCodecs.INT));
+        var codec = CommandTreeCodecs.node(
+                Map.of(123, WireCodecs.mapped(WireCodecs.INT, ArgumentValue::new, ArgumentValue::value)));
         for (var node : List.of(
-                new CommandNode(0, new int[] {1, 2}, 0, null),
-                new CommandNode(13, new int[0], 123, new CommandNode.Literal("café")),
-                new CommandNode(
+                new CommandNode<ArgumentValue>(0, new int[] {1, 2}, 0, null),
+                new CommandNode<ArgumentValue>(13, new int[0], 123, new CommandNode.Literal<ArgumentValue>("café")),
+                new CommandNode<ArgumentValue>(
                         50,
                         new int[] {0},
                         0,
-                        new CommandNode.Argument(
-                                "argument", new Variant<>(123, Integer.MIN_VALUE), Key.key("minecraft:ask_server"))))) {
+                        new CommandNode.Argument<ArgumentValue>(
+                                "argument", new ArgumentValue(Integer.MIN_VALUE), Key.key("minecraft:ask_server"))))) {
             var buffer = Unpooled.buffer();
             try {
                 codec.encode(buffer, node);
@@ -33,6 +40,18 @@ class CommandTreeCodecsTest {
             } finally {
                 buffer.release();
             }
+        }
+    }
+
+    @Test
+    void rejectsAnArgumentDecodedByTheWrongSchema() {
+        var codec = CommandTreeCodecs.node(
+                Map.of(1, WireCodecs.mapped(WireCodecs.INT, ArgumentValue::new, ArgumentValue::value)));
+        var input = Unpooled.wrappedBuffer(new byte[] {2, 0, 1, 'x', 1, 0, 0, 0, 0});
+        try {
+            assertThrows(IllegalArgumentException.class, () -> codec.decode(input));
+        } finally {
+            input.release();
         }
     }
 
@@ -60,18 +79,20 @@ class CommandTreeCodecsTest {
 
     @Test
     void validatesChildAndRedirectGraphsSeparatelyAndIgnoresReferencesOutsideTheNodeSet() {
-        CommandTreeCodecs.validate(
-                List.of(new CommandNode(0, new int[] {1, 1}, 0, null), new CommandNode(8, new int[] {-1, 9}, 0, null)));
+        CommandTreeCodecs.validate(List.of(
+                new CommandNode<ArgumentValue>(0, new int[] {1, 1}, 0, null),
+                new CommandNode<ArgumentValue>(8, new int[] {-1, 9}, 0, null)));
         assertThrows(
                 IllegalStateException.class,
-                () -> CommandTreeCodecs.validate(List.of(new CommandNode(0, new int[] {0}, 0, null))));
+                () -> CommandTreeCodecs.validate(List.of(new CommandNode<ArgumentValue>(0, new int[] {0}, 0, null))));
         assertThrows(
                 IllegalStateException.class,
-                () -> CommandTreeCodecs.validate(List.of(new CommandNode(8, new int[0], 0, null))));
+                () -> CommandTreeCodecs.validate(List.of(new CommandNode<ArgumentValue>(8, new int[0], 0, null))));
         assertThrows(
                 IllegalStateException.class,
                 () -> CommandTreeCodecs.validate(List.of(
-                        new CommandNode(0, new int[] {1}, 0, null), new CommandNode(0, new int[] {0}, 0, null))));
+                        new CommandNode<ArgumentValue>(0, new int[] {1}, 0, null),
+                        new CommandNode<ArgumentValue>(0, new int[] {0}, 0, null))));
         CommandTreeCodecs.validate(List.of());
     }
 }
