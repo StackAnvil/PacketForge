@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.netty.buffer.Unpooled;
 import java.util.List;
 import java.util.Map;
+import net.kyori.adventure.key.Key;
 import org.junit.jupiter.api.Test;
 
 class CommandTreeCodecsTest {
@@ -19,7 +20,7 @@ class CommandTreeCodecsTest {
                         new int[] {0},
                         0,
                         new CommandNode.Argument(
-                                "argument", new Variant<>(123, Integer.MIN_VALUE), "minecraft:ask_server")))) {
+                                "argument", new Variant<>(123, Integer.MIN_VALUE), Key.key("minecraft:ask_server"))))) {
             var buffer = Unpooled.buffer();
             try {
                 codec.encode(buffer, node);

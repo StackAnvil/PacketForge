@@ -129,6 +129,7 @@ class GeneratedRoundTripTest {
         }
         Class<?> clazz = (Class<?>) type;
         if (clazz == String.class) return name;
+        if (clazz == net.kyori.adventure.key.Key.class) return net.kyori.adventure.key.Key.key(name);
         return clazz.isEnum()
                 ? java.util.Arrays.stream(clazz.getEnumConstants())
                         .filter(v -> ((Enum<?>) v).name().equals(name))
@@ -299,7 +300,8 @@ class GeneratedRoundTripTest {
             return shape.contains("ServerStatus")
                     ? com.google.gson.JsonParser.parseString("{\"description\":\"sample" + variant + "\"}")
                     : new com.google.gson.JsonPrimitive("sample" + variant);
-        if (clazz == String.class) return shape.equals("IDENTIFIER") ? "minecraft:stone" : variant == 0 ? "" : "é";
+        if (clazz == net.kyori.adventure.key.Key.class) return net.kyori.adventure.key.Key.key("minecraft:stone");
+        if (clazz == String.class) return variant == 0 ? "" : "é";
         if (clazz == int.class || clazz == Integer.class) return shape.startsWith("REGISTRY:") ? 0 : variant;
         if (clazz == long.class || clazz == Long.class) return variant == 2 ? Long.MIN_VALUE : (long) variant;
         if (clazz == float.class || clazz == Float.class) return (float) variant;

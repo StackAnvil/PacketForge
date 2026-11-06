@@ -57,6 +57,8 @@ class LoginQueryAnalyzerTest {
         assertEquals(
                 List.of("transactionId", "channel", "data"),
                 fields.stream().map(Analyzer.Field::name).toList());
+        assertEquals("net.kyori.adventure.key.Key", fields.get(1).read().type());
+        assertEquals("net.kyori.adventure.key.Key", fields.get(1).write().type());
         assertEquals("WireCodecs.remainingBytes(7)", fields.get(2).read().codec());
         assertEquals(
                 "WireCodecs.remainingBytes(Integer.MAX_VALUE)",

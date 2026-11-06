@@ -1,6 +1,7 @@
 package org.stackanvil.packetforge.commons;
 
 import java.util.*;
+import net.kyori.adventure.key.Key;
 
 /** Command nodes with registered argument payloads and independent dependency graphs. */
 public final class CommandTreeCodecs {
@@ -20,7 +21,7 @@ public final class CommandTreeCodecs {
                         var codec = codecs.get(id);
                         if (codec != null) {
                             Object value = codec.decode(input);
-                            String suggestion = (flags & 16) != 0 ? WireCodecs.IDENTIFIER.decode(input) : null;
+                            Key suggestion = (flags & 16) != 0 ? WireCodecs.IDENTIFIER.decode(input) : null;
                             stub = new CommandNode.Argument(name, new Variant<>(id, value), suggestion);
                         }
                     } else if ((flags & 3) == 1) stub = new CommandNode.Literal(WireCodecs.STRING.decode(input));

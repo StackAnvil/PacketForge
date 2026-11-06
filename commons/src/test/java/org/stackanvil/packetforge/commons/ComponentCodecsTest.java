@@ -108,7 +108,7 @@ class ComponentCodecsTest {
     @Test
     void holderSetsPreserveTagsAndDirectIds() {
         for (HolderSet value : List.of(
-                new HolderSet.Tag("minecraft:logs"),
+                new HolderSet.Tag(Key.key("minecraft:logs")),
                 new HolderSet.Direct(List.of()),
                 new HolderSet.Direct(List.of(0, 128)))) {
             var buffer = Unpooled.buffer();

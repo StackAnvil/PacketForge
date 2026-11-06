@@ -3,6 +3,7 @@ package org.stackanvil.packetforge.protocol;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.netty.buffer.Unpooled;
+import net.kyori.adventure.key.Key;
 import org.junit.jupiter.api.Test;
 import org.stackanvil.packetforge.protocol.packet.game.*;
 
@@ -29,9 +30,9 @@ class ImperativePacketTest {
         try {
             var opened = ServerboundSeenAdvancementsPacket.CODEC.decode(input);
             assertEquals(ServerboundSeenAdvancementsPacket_Action.OPENED_TAB, opened.action());
-            assertEquals("minecraft:x", opened.tab());
+            assertEquals(Key.key("minecraft:x"), opened.tab());
             var closed = new ServerboundSeenAdvancementsPacket(
-                    ServerboundSeenAdvancementsPacket_Action.CLOSED_SCREEN, "minecraft:unused");
+                    ServerboundSeenAdvancementsPacket_Action.CLOSED_SCREEN, Key.key("minecraft:unused"));
             closed.serialize(output);
             assertEquals(1, output.readableBytes());
             assertEquals(1, output.readUnsignedByte());

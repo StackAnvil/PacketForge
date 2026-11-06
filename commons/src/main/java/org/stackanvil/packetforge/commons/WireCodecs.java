@@ -15,6 +15,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import net.kyori.adventure.key.InvalidKeyException;
+import net.kyori.adventure.key.Key;
 
 /** Shared wire operations used by generated codecs. All lengths are checked before allocation. */
 public final class WireCodecs {
@@ -197,18 +199,16 @@ public final class WireCodecs {
         b.writeLong(v.getLeastSignificantBits());
     });
     public static final PacketCodec<String> STRING = string(32767);
-    public static final PacketCodec<String> IDENTIFIER =
-            of(b -> identifier(STRING.decode(b)), (b, v) -> STRING.encode(b, identifier(v)));
+    public static final PacketCodec<Key> IDENTIFIER = mapped(STRING, WireCodecs::identifier, Key::asString);
     public static final PacketCodec<BlockPosition> BLOCK_POSITION =
             of(b -> BlockPosition.unpack(b.readLong()), (b, v) -> b.writeLong(v.packed()));
 
-    private static String identifier(String value) {
-        int separator = value.indexOf(':');
-        String namespace = separator <= 0 ? "minecraft" : value.substring(0, separator);
-        String path = separator < 0 ? value : value.substring(separator + 1);
-        if (!namespace.matches("[a-z0-9_.-]+") || !path.matches("[a-z0-9/._-]*"))
-            throw new IllegalArgumentException("Invalid identifier: " + value);
-        return namespace + ":" + path;
+    private static Key identifier(String value) {
+        try {
+            return Key.key(value);
+        } catch (InvalidKeyException invalid) {
+            throw new IllegalArgumentException("Invalid identifier: " + value, invalid);
+        }
     }
 
     public static final PacketCodec<ChunkPosition> CHUNK_POSITION =

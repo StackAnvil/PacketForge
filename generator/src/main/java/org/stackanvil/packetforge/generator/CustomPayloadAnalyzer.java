@@ -79,7 +79,7 @@ final class CustomPayloadAnalyzer {
         }
         String sourceKey = analyzer.codecVariants.getOrDefault(source.name(), source.name());
         String name = "dispatch_" + Integer.toUnsignedString((sourceKey + "#custom:" + limit + "#" + cases).hashCode());
-        Wire key = new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
+        Wire key = new Wire("net.kyori.adventure.key.Key", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         Wire fallbackWire = new Wire(
                 "byte[]",
                 "WireCodecs.remainingBytes(" + limit + ")",
@@ -89,14 +89,14 @@ final class CustomPayloadAnalyzer {
                 ", ",
                 cases.stream()
                         .map(c -> "java.util.Map.entry("
-                                + new com.google.gson.Gson().toJson(c.key())
+                                + "net.kyori.adventure.key.Key.key(" + new com.google.gson.Gson().toJson(c.key()) + ")"
                                 + ", (PacketCodec<?>) "
                                 + c.value().codec()
                                 + ")")
                         .toList());
         Wire implementation = new Wire(
-                "org.stackanvil.packetforge.commons.Variant<String>",
-                "WireCodecs.dispatchWithFallback(WireCodecs.IDENTIFIER, java.util.Map.<String, PacketCodec<?>>ofEntries("
+                "org.stackanvil.packetforge.commons.Variant<net.kyori.adventure.key.Key>",
+                "WireCodecs.dispatchWithFallback(WireCodecs.IDENTIFIER, java.util.Map.<net.kyori.adventure.key.Key, PacketCodec<?>>ofEntries("
                         + entriesCode
                         + "), "
                         + fallbackWire.codec()

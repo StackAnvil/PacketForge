@@ -211,7 +211,11 @@ final class LoginQueryAnalyzer {
         List<Field> fields = new ArrayList<>();
         fields.add(new Field("transactionId", "int", transaction, transaction));
         if (!answer) {
-            Wire channel = new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER", source.name() + "#payload.id");
+            Wire channel = new Wire(
+                    "net.kyori.adventure.key.Key",
+                    "WireCodecs.IDENTIFIER",
+                    "IDENTIFIER",
+                    source.name() + "#payload.id");
             fields.add(new Field("channel", "Identifier", channel, channel));
         }
         String projection =

@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
+import net.kyori.adventure.key.Key;
 import org.junit.jupiter.api.Test;
 import org.stackanvil.packetforge.commons.*;
 import org.stackanvil.packetforge.protocol.packet.common.*;
@@ -72,7 +73,7 @@ class VanillaCompatibilityTest {
                 new ClientboundResetScorePacket("owner", "objective"),
                 new ClientboundCustomChatCompletionsPacket(
                         ClientboundCustomChatCompletionsPacket_Action.REMOVE, List.of("hello", "café")),
-                new ClientboundCooldownPacket("minecraft:stone", 128),
+                new ClientboundCooldownPacket(Key.key("minecraft:stone"), 128),
                 new ServerboundClientCommandPacket(ServerboundClientCommandPacket_Action.REQUEST_STATS),
                 new ServerboundUseItemPacket(
                         org.stackanvil.packetforge.protocol.type.world.InteractionHand.OFF_HAND, 12345, 180f, -90f),
@@ -100,7 +101,7 @@ class VanillaCompatibilityTest {
                             ? Either.right("waypoint café")
                             : Either.left(new UUID(Long.MIN_VALUE, Long.MAX_VALUE));
                     var icon = new Waypoint_Icon(
-                            "minecraft:default",
+                            Key.key("minecraft:default"),
                             named ? java.util.Optional.of(0xff123456) : java.util.Optional.empty());
                     samples.add(
                             new ClientboundTrackedWaypointPacket(operation, new TrackedWaypoint(id, icon, contents)));
@@ -154,7 +155,7 @@ class VanillaCompatibilityTest {
                     var argument = new CommandNode.Argument(
                             "argument café",
                             new Variant<>(branch.get("key").getAsInt(), value),
-                            suggestions ? "minecraft:ask_server" : null);
+                            suggestions ? Key.key("minecraft:ask_server") : null);
                     samples.add(new ClientboundCommandsPacket(
                             List.of(
                                     new CommandNode(0, new int[] {1}, 0, null),
@@ -167,7 +168,7 @@ class VanillaCompatibilityTest {
                     ? new CommandNode.Argument(
                             "argument",
                             new Variant<>(0, Unit.INSTANCE),
-                            (flags & 16) != 0 ? "minecraft:ask_server" : null)
+                            (flags & 16) != 0 ? Key.key("minecraft:ask_server") : null)
                     : (flags & 3) == 1 ? new CommandNode.Literal("literal") : null;
             samples.add(new ClientboundCommandsPacket(List.of(new CommandNode(flags, new int[0], 9, stub)), 0));
         }
@@ -259,6 +260,7 @@ class VanillaCompatibilityTest {
             VanillaVariantAudit.run(
                     loader, models, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
             VanillaTextAudit.run(loader, registries, byteBuf, unpooled, friendly, registryAccess, decode, encode);
+            VanillaIdentifierAudit.run(loader, byteBuf, unpooled, decode, encode);
         }
     }
 

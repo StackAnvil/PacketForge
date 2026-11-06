@@ -53,6 +53,8 @@ class CustomPayloadAnalyzerTest {
         var wire = lower(analyzer, "List.of(new CustomPacketPayload.TypeAndCodec(Brand.TYPE, Brand.STREAM_CODEC))");
         var table = analyzer.dispatches.values().iterator().next();
         assertEquals("dispatch:" + table.name(), wire.shape());
+        assertEquals("net.kyori.adventure.key.Key", table.key().type());
+        assertEquals("org.stackanvil.packetforge.commons.Variant<net.kyori.adventure.key.Key>", wire.type());
         assertEquals("minecraft:test_brand", table.cases().getFirst().key());
         assertEquals("remainingBytes(64)", table.fallback().shape());
         assertEquals("byte[]", table.fallback().type());

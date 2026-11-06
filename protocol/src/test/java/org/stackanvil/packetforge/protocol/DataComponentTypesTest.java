@@ -92,16 +92,20 @@ class DataComponentTypesTest {
                 import org.stackanvil.packetforge.protocol.DataComponentTypes;
                 import org.stackanvil.packetforge.commons.ComponentPatch;
                 import net.kyori.adventure.text.Component;
+                import net.kyori.adventure.key.Key;
+                import org.stackanvil.packetforge.protocol.packet.game.ClientboundCooldownPacket;
                 class Client {
                     ComponentPatch patch = ComponentPatch.builder().set(DataComponentTypes.DAMAGE, 12).build();
                     int damage = patch.get(DataComponentTypes.DAMAGE).orElseThrow();
                     ComponentPatch named = ComponentPatch.builder().set(DataComponentTypes.CUSTOM_NAME, Component.text("name")).build();
+                    ClientboundCooldownPacket cooldown = new ClientboundCooldownPacket(Key.key("test:cooldown"), 20);
                 }
                 """;
         assertTrue(compile(source));
         assertFalse(compile(source.replace("DAMAGE, 12", "DAMAGE, \"wrong\"")));
         assertFalse(compile(source.replace(
                 "Component.text(\"name\")", "new org.stackanvil.packetforge.commons.NbtTag.StringValue(\"name\")")));
+        assertFalse(compile(source.replace("Key.key(\"test:cooldown\")", "\"test:cooldown\"")));
     }
 
     private boolean compile(String source) throws Exception {

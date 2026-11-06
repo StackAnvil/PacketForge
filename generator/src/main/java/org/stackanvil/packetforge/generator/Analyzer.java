@@ -210,7 +210,7 @@ final class Analyzer {
             Map.entry("VarIntArray", "VAR_INT_ARRAY:int[]"),
             Map.entry("ChunkPos", "CHUNK_POSITION:org.stackanvil.packetforge.commons.ChunkPosition"),
             Map.entry("UUID", "UUID_CODEC:java.util.UUID"),
-            Map.entry("Identifier", "IDENTIFIER:String"),
+            Map.entry("Identifier", "IDENTIFIER:net.kyori.adventure.key.Key"),
             Map.entry("BlockPos", "BLOCK_POSITION:org.stackanvil.packetforge.commons.BlockPosition"));
     private static final Map<String, String> CODEC_SCALARS = Map.ofEntries(
             Map.entry("BOOL", "Boolean"),
@@ -722,7 +722,8 @@ final class Analyzer {
         String operation = call.getNameAsString().substring(4);
         if (SCALARS.containsKey(operation) && call.getArguments().isEmpty()) return scalar(operation);
         if (Set.of("RegistryKey", "ResourceKey").contains(operation)
-                && call.getArguments().isEmpty()) return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
+                && call.getArguments().isEmpty())
+            return new Wire("net.kyori.adventure.key.Key", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         if (operation.equals("Nbt") && call.getArguments().isEmpty())
             return new Wire(
                     "org.stackanvil.packetforge.commons.NbtTag.Compound",
@@ -851,7 +852,7 @@ final class Analyzer {
         if (operation.equals("Utf") && call.getArguments().size() <= 2)
             return string(call.getArguments().size() == 1 ? "32767" : integer(call.getArgument(1), source));
         if (operation.equals("ResourceKey") && call.getArguments().size() == 1)
-            return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
+            return new Wire("net.kyori.adventure.key.Key", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         if (operation.equals("Nbt") && call.getArguments().size() == 1)
             return new Wire(
                     "org.stackanvil.packetforge.commons.NbtTag.Compound",

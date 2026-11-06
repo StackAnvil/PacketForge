@@ -7,6 +7,7 @@ import io.netty.buffer.Unpooled;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import net.kyori.adventure.key.Key;
 import org.junit.jupiter.api.Test;
 
 class WireCodecsTest {
@@ -62,7 +63,7 @@ class WireCodecsTest {
     @Test
     void preservesStringsContainersAndPackedPositions() {
         roundTrip(WireCodecs.string(4), "\ud83d\ude03é");
-        roundTrip(WireCodecs.IDENTIFIER, "minecraft:stone");
+        roundTrip(WireCodecs.IDENTIFIER, Key.key("minecraft:stone"));
         roundTrip(WireCodecs.optional(WireCodecs.VAR_INT), Optional.of(-1));
         roundTrip(WireCodecs.optional(WireCodecs.VAR_INT), Optional.empty());
         roundTrip(WireCodecs.list(WireCodecs.STRING, 3), List.of("a", "b"));
@@ -70,7 +71,7 @@ class WireCodecsTest {
         roundTrip(WireCodecs.BLOCK_POSITION, new BlockPosition(33554431, 2047, -33554432));
         withBuffer(
                 new byte[] {5, 115, 116, 111, 110, 101},
-                b -> assertEquals("minecraft:stone", WireCodecs.IDENTIFIER.decode(b)));
+                b -> assertEquals(Key.key("minecraft:stone"), WireCodecs.IDENTIFIER.decode(b)));
     }
 
     private static <T> void roundTrip(PacketCodec<T> codec, T value) {

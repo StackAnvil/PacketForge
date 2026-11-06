@@ -428,7 +428,8 @@ final class ProgramLowerer {
         };
         if (codec != null) return new Wire(name, "WireCodecs." + codec, codec);
         if (name.equals("String")) return new Wire("String", "WireCodecs.STRING", "UTF8");
-        if (name.equals("Identifier")) return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
+        if (name.equals("Identifier"))
+            return new Wire("net.kyori.adventure.key.Key", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         if (name.equals("BlockPos"))
             return new Wire(
                     "org.stackanvil.packetforge.commons.BlockPosition", "WireCodecs.BLOCK_POSITION", "BLOCK_POSITION");
@@ -494,7 +495,8 @@ final class ProgramLowerer {
             }
             if (raw.equals("Holder") && arguments.size() == 1)
                 return valueType(arguments.get(0).asString());
-            if (raw.equals("ResourceKey")) return new Wire("String", "WireCodecs.IDENTIFIER", "IDENTIFIER");
+            if (raw.equals("ResourceKey"))
+                return new Wire("net.kyori.adventure.key.Key", "WireCodecs.IDENTIFIER", "IDENTIFIER");
         }
         var target = analyzer.index.source(analyzer.index.resolve(name, source));
         if (target.declaration() instanceof EnumDeclaration) {

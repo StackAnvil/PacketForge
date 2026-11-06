@@ -7,11 +7,13 @@ import io.netty.buffer.Unpooled;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.junit.jupiter.api.Test;
 import org.stackanvil.packetforge.commons.ComponentPatch;
 import org.stackanvil.packetforge.commons.Packet;
+import org.stackanvil.packetforge.protocol.packet.game.ClientboundCooldownPacket;
 import org.stackanvil.packetforge.protocol.packet.game.ClientboundSystemChatPacket;
 import org.stackanvil.packetforge.protocol.packet.login.ClientboundLoginDisconnectPacket;
 
@@ -24,8 +26,10 @@ class AdventureApiTest {
                 .build();
         assertEquals(text, patch.get(DataComponentTypes.CUSTOM_NAME).orElseThrow());
         var registry = GeneratedProtocol.registry();
-        for (Packet packet :
-                List.of(new ClientboundSystemChatPacket(text, false), new ClientboundLoginDisconnectPacket(text))) {
+        for (Packet packet : List.of(
+                new ClientboundSystemChatPacket(text, false),
+                new ClientboundLoginDisconnectPacket(text),
+                new ClientboundCooldownPacket(Key.key("test:cooldown"), 20))) {
             var entry = registry.entries().values().stream()
                     .filter(value -> value.type().isInstance(packet))
                     .findFirst()
@@ -39,6 +43,34 @@ class AdventureApiTest {
             } finally {
                 body.release();
             }
+        }
+    }
+
+    @Test
+    void everyExtractedIdentifierFieldExposesAdventureKeys() throws Exception {
+        try (var reader = new InputStreamReader(
+                getClass().getResourceAsStream("/packetforge/protocol.json"), StandardCharsets.UTF_8)) {
+            var report = JsonParser.parseReader(reader).getAsJsonObject();
+            int count = 0;
+            for (var model : report.getAsJsonArray("models")) {
+                for (var value : model.getAsJsonObject().getAsJsonArray("fields")) {
+                    var field = value.getAsJsonObject();
+                    if (!field.getAsJsonObject("read")
+                            .get("shape")
+                            .getAsString()
+                            .contains("IDENTIFIER")) continue;
+                    for (String direction : List.of("read", "write")) {
+                        assertTrue(
+                                field.getAsJsonObject(direction)
+                                        .get("type")
+                                        .getAsString()
+                                        .contains("net.kyori.adventure.key.Key"),
+                                model.toString());
+                    }
+                    count++;
+                }
+            }
+            assertEquals(47, count);
         }
     }
 

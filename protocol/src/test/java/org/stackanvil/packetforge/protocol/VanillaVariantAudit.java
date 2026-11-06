@@ -9,6 +9,7 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import net.kyori.adventure.key.Key;
 import org.stackanvil.packetforge.commons.*;
 import org.stackanvil.packetforge.protocol.packet.game.ServerboundCommandSuggestionPacket;
 import org.stackanvil.packetforge.protocol.packet.game.ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC;
@@ -301,8 +302,8 @@ final class VanillaVariantAudit {
                 Object value = answer
                         ? generatedType.getConstructor(int.class, byte[].class).newInstance(-123, data)
                         : generatedType
-                                .getConstructor(int.class, String.class, byte[].class)
-                                .newInstance(-123, "packetforge:query", data);
+                                .getConstructor(int.class, Key.class, byte[].class)
+                                .newInstance(-123, Key.key("packetforge:query"), data);
                 byte[] bytes = body(generated, value);
                 ByteBuf input = Unpooled.wrappedBuffer(bytes);
                 try {
@@ -323,8 +324,8 @@ final class VanillaVariantAudit {
                                         .getConstructor(int.class, byte[].class)
                                         .newInstance(-123, new byte[] {1})
                                 : generatedType
-                                        .getConstructor(int.class, String.class, byte[].class)
-                                        .newInstance(-123, "packetforge:query", new byte[0]);
+                                        .getConstructor(int.class, Key.class, byte[].class)
+                                        .newInstance(-123, Key.key("packetforge:query"), new byte[0]);
                         assertArrayEquals(
                                 body(generated, canonical),
                                 sourceEncode(source, vanilla),
@@ -361,8 +362,8 @@ final class VanillaVariantAudit {
                 Object value = answer
                         ? generatedType.getConstructor(int.class, byte[].class).newInstance(-123, wire)
                         : generatedType
-                                .getConstructor(int.class, String.class, byte[].class)
-                                .newInstance(-123, "packetforge:query", wire);
+                                .getConstructor(int.class, Key.class, byte[].class)
+                                .newInstance(-123, Key.key("packetforge:query"), wire);
                 assertArrayEquals(
                         sourceEncode(source, vanilla),
                         body(generated, value),
@@ -460,7 +461,7 @@ final class VanillaVariantAudit {
                     .get(null);
             String shape = definition.getAsJsonObject("fallback").get("shape").getAsString();
             int maximum = Integer.parseInt(shape.substring(shape.indexOf('(') + 1, shape.indexOf(')')));
-            String channel = "packetforge:unknown";
+            Key channel = Key.key("packetforge:unknown");
             for (int length : new int[] {0, 1, maximum, maximum + 1}) {
                 byte[] data = new byte[length];
                 Arrays.fill(data, (byte) 0xa5);
@@ -505,7 +506,7 @@ final class VanillaVariantAudit {
                 Object id = loader.loadClass("net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type")
                         .getMethod("id")
                         .invoke(type);
-                assertEquals(channel, id.toString());
+                assertEquals(channel.asString(), id.toString());
                 ByteBuf identifier = Unpooled.buffer();
                 try {
                     WireCodecs.IDENTIFIER.encode(identifier, channel);
@@ -524,7 +525,8 @@ final class VanillaVariantAudit {
             Class<?> brand = (Class<?>) GeneratedRoundTripTest.type(
                     branch.getAsJsonObject("value").get("type").getAsString());
             Object payload = brand.getConstructor(String.class).newInstance("é".repeat(30000));
-            byte[] bytes = body(generated, new Variant<>(branch.get("key").getAsString(), payload));
+            byte[] bytes =
+                    body(generated, new Variant<>(Key.key(branch.get("key").getAsString()), payload));
             assertArrayEquals(bytes, sourceEncode(source, sourceDecode(source, bytes)));
             compared++;
         }

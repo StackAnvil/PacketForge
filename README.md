@@ -50,6 +50,15 @@ var text = Component.text("Hello").color(NamedTextColor.GOLD);
 var packet = new ClientboundSystemChatPacket(text, false);
 ```
 
+Identifiers use Adventure `Key` throughout generated packet fields, registry-key references, custom-payload channels, command suggestions, and holder tags. Collections and optional identifiers also use `Key`. The decoder defaults an omitted or empty namespace to `minecraft` and rejects invalid identifier characters. Both directions retain the source string limit.
+
+```java
+import net.kyori.adventure.key.Key;
+import org.stackanvil.packetforge.protocol.packet.game.ClientboundCooldownPacket;
+
+var packet = new ClientboundCooldownPacket(Key.key("minecraft:ender_pearl"), 20);
+```
+
 `NbtDataComponentValue` holds opaque NBT in item hover events. `NbtDialog` supplies a registry reference or inline NBT for Adventure's `DialogLike`. `JsonDialog` supplies inline JSON for JSON text. These types live in `org.stackanvil.packetforge.commons.text`. The codecs retain custom click payloads as Adventure `BinaryTagHolder` values. Text serialization uses an adapted MCProtocolLib serializer, with attribution in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 `DataComponentTypes` contains a typed constant for each of the 122 recovered data-component types. Each constant records its wire ID, Adventure `Key`, and payload codec. The generator derives the names and value types from the registry. For example, `DAMAGE` accepts an `Integer`, and `LORE` accepts the generated `ItemLore` type.
@@ -119,4 +128,4 @@ The generator can reuse existing decompiled sources. Relative paths resolve from
 
 `./gradlew test` tests malformed wire inputs, field mismatches, generated Java compilation, and packet ID preservation. It round-trips three sample cases for each generated registration. Imperative codecs also receive mutations of valid seed bodies. Focused tests exercise conditional fields and bit flags. The compatibility test loads the verified server jar in an isolated class loader and initializes vanilla registries. This runs in tests only.
 
-The current suite covers 780 generated round trips and 8,194 vanilla comparisons: 3,705 packet bodies, 1,761 dispatch payloads, 1,464 component patches, 32 nested-value and sparse-enum cases, 1,121 named-codec, context, command-flag, graph, and payload boundary cases, and 111 rich-text, style, and event cases for 26.3. It also compares all 260 packet IDs, directions, states, and names with vanilla protocol details, verifies every recovered registry discriminator, and rejects source-invalid payload cases. Command tests cover all 256 node-flag bytes and all 256 bound-flag bytes for each numeric argument type. It compares encoded bytes, then compares complete decoded wire values when unordered NBT entries change order. Sample cases do not prove every value or branch. Live client/server interoperability and other Minecraft versions are not validated. The coverage report includes exact input hashes and tool versions for reproducing the extraction.
+The current suite covers 780 generated round trips and 8,468 vanilla comparisons: 3,705 packet bodies, 1,761 dispatch payloads, 1,464 component patches, 32 nested-value and sparse-enum cases, 1,121 named-codec, context, command-flag, graph, and payload boundary cases, 111 rich-text, style, and event cases, and 274 identifier cases for 26.3. It also compares all 260 packet IDs, directions, states, and names with vanilla protocol details, verifies every recovered registry discriminator, and rejects source-invalid payload cases. Command tests cover all 256 node-flag bytes and all 256 bound-flag bytes for each numeric argument type. It compares encoded bytes, then compares complete decoded wire values when unordered NBT entries change order. Sample cases do not prove every value or branch. Live client/server interoperability and other Minecraft versions are not validated. The coverage report includes exact input hashes and tool versions for reproducing the extraction.
