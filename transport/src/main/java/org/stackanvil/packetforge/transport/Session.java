@@ -188,6 +188,16 @@ public final class Session implements AutoCloseable {
         });
     }
 
+    /** Runs application work in connection order. The action must not block the event loop. */
+    public CompletableFuture<Void> execute(Runnable action) {
+        Objects.requireNonNull(action);
+        return command(result -> {
+            requireOpen();
+            action.run();
+            result.complete(null);
+        });
+    }
+
     /** Completes after disconnect callbacks. An explicit close has a null disconnect cause. */
     public CompletableFuture<Void> closeFuture() {
         return closed.copy();

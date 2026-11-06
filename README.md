@@ -168,7 +168,31 @@ Callbacks run in connection order on the event loop. Keep them short and do not 
 
 Malformed remote packets and listener failures close the connection. Source `SkippedPacketException` rejections notify `packetSkipped` and allow the next frame. A local registry or packet-codec error fails its send future before any bytes are written. `disconnect(cause)` reports a local failure to disconnect listeners. An ordinary `close` reports a null cause. `Session.close()` starts a close without waiting; `closeAsync()` and `closeFuture()` complete after disconnect callbacks. Transport and server `close()` wait outside their own network callbacks and start shutdown without blocking inside those callbacks.
 
-The default connect timeout is 10 seconds and the idle-read timeout is 30 seconds. The transport constructor accepts a thread count and timeout durations; a zero read timeout disables idle-read detection. Automatic login, authentication, configuration negotiation, keep-alive responses, and bundle assembly are still pending. Applications currently drive those exchanges through the session API.
+The default connect timeout is 10 seconds and the idle-read timeout is 30 seconds. The transport constructor accepts a thread count and timeout durations; a zero read timeout disables idle-read detection. `Session.execute` dispatches application work in connection order without exposing Netty's channel.
+
+`transport.login.ClientLogin` automates the login handshake, RSA/AES exchange, compression negotiation, and configuration acknowledgements. Install it in the transport's configure callback. `authenticated()` completes after login is acknowledged and configuration starts. `ready()` completes after the first transition to PLAY. This example uses an existing account profile and access token; acquiring account credentials belongs to the application.
+
+```java
+try (var authentication = new MojangSessionService();
+        var transport = new TcpTransport()) {
+    var attached = new CompletableFuture<ClientLogin>();
+    transport.connect(address, session -> attached.complete(
+            ClientLogin.builder(profile, "localhost", 25565)
+                    .authenticator(authentication.authenticator(accessToken))
+                    .attach(session))).join();
+    ClientLogin login = attached.join();
+    Session session = login.ready().join();
+    // Use the PLAY session here.
+}
+```
+
+Use `ClientLogin.offline(username, host, port)` for an offline account. It rejects servers that require authentication. Client handlers answer keep-alives, pings, cookies, and known-pack selection in configuration and PLAY. The default pack selection is empty, which requests full registry data. `knownPacks` can select a unique subset already available to the application. `queries` answers login plugin queries asynchronously and adds the nullable presence byte. `cookies` accepts a shared store; the default store copies bytes and belongs to that client builder. `beforePlay` waits for asynchronous configuration work before acknowledging each transition to PLAY, including reconfiguration.
+
+`ServerLogin.offline()`, `encrypted(keys)`, and `online(keys, authenticator)` create server handler builders. Create RSA keys before accepting connections and share them across handlers. Attach a fresh handler to each accepted session. Await `authenticated()`, send the application's configuration packets, then call `finishConfiguration()`. That future completes after the peer acknowledges PLAY. `beginConfiguration()` switches PLAY back to configuration and completes after its acknowledgement. Builders also select compression, the server session UUID, transfer policy, and whether session-service verification includes the remote address. `reject(Component)` sends the disconnect packet for the current phase and closes the session.
+
+`MojangSessionService` implements asynchronous server verification and binds client access tokens through `authenticator(token)`. It discovers the current `session/join` and `session/verify` endpoints, caches discovery for 24 hours, retries failed discovery on the next request, and bounds HTTP responses and request times. Authentication callbacks can also use an application's own service implementation; they must return without blocking the event loop. Login rejections retain Adventure reasons in `LoginException`.
+
+Login handlers leave all packets visible to application listeners. Applications supply registry storage, client settings, resource-pack and code-of-conduct policy, transfer reconnects, and gameplay behavior. A server login handler expects LOGIN or TRANSFER intentions; route status requests to a status handler when hosting both services. Bundle assembly remains an application concern. The library does not implement a Minecraft world server or client simulation.
 
 ## Extraction
 
@@ -209,4 +233,4 @@ The generator can reuse existing decompiled sources. Relative paths resolve from
 
 The current suite covers 780 generated round trips and 8,522 vanilla comparisons: 3,705 packet bodies, 1,761 dispatch payloads, 1,464 component patches, 32 nested-value and sparse-enum cases, 1,121 named-codec, context, command-flag, graph, and payload boundary cases, 111 rich-text, style, and event cases, 274 identifier cases, and 54 status cases for 26.3. It also compares all 260 packet IDs, directions, states, and names with vanilla protocol details, verifies every recovered registry discriminator, and rejects source-invalid payload cases. Command tests cover all 256 node-flag bytes and all 256 bound-flag bytes for each numeric argument type. It compares encoded bytes, then compares complete decoded wire values when unordered NBT entries change order. Sample cases do not prove every value or branch. Live client/server interoperability and other Minecraft versions are not validated. The coverage report includes exact input hashes and tool versions for reproducing the extraction.
 
-Transport tests separately compare frame, compression, and cipher behavior with isolated vanilla handlers. Loopback tests cover a status handshake, concurrent sends, compressed and encrypted packets, timeouts, callback failures, and connection shutdown. They do not connect to a live Minecraft client or server.
+Transport tests separately compare frame, compression, cipher, login hash, RSA exchange, username validation, and offline UUID behavior with isolated vanilla code. Loopback tests cover status, online and offline login, HTTP discovery and authentication with local mocks, concurrent sends, compressed and encrypted packets, configuration and reconfiguration, cookies, plugin queries, rejection paths, timeouts, callback failures, and connection shutdown. They do not use live account credentials or connect to a live Minecraft client or server.

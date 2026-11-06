@@ -33,3 +33,6 @@ Transport callbacks and stream mutations run on the session's event loop.
 Keep inbound and outbound states independent. Write negotiation packets before applying new outbound settings.
 Drain callback commands before decoding the next frame, including frames in the same TCP read.
 Never block a network callback on a session future or event-loop shutdown.
+Login handlers must authenticate asynchronously and validate the RSA challenge before enabling encryption.
+Keep login and configuration acknowledgements in their old outbound state.
+Authentication HTTP tests use local mocks. Never require live account credentials.
