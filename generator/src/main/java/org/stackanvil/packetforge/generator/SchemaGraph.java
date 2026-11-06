@@ -141,6 +141,13 @@ final class SchemaGraph {
     }
 
     private void add(Set<SchemaReference> references, Wire wire) {
+        if (ComponentReferences.uses(wire.shape())) {
+            var component = tableOrder.stream()
+                    .filter(table -> table.registry().equals("DATA_COMPONENT_TYPE"))
+                    .findFirst()
+                    .orElseThrow(() -> new Unsupported("Unresolved data-component registry types"));
+            references.add(new SchemaReference.Dispatch(component.name()));
+        }
         references.addAll(javaReferences.type(wire.type()));
         references.addAll(javaReferences.expression(wire.codec()));
     }

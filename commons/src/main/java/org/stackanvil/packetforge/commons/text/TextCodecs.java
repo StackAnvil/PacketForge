@@ -1,5 +1,6 @@
 package org.stackanvil.packetforge.commons.text;
 
+import com.google.gson.JsonElement;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.Style;
 import org.cloudburstmc.nbt.NbtMap;
@@ -39,11 +40,19 @@ public final class TextCodecs {
                 value -> TextNbt.fromValue(NbtComponentSerializer.nbt().serialize(value)));
     }
 
-    public static PacketCodec<Component> json(PacketCodec<com.google.gson.JsonElement> json) {
+    public static Component decodeJson(JsonElement value) {
+        return JsonTextSerializer.read(value);
+    }
+
+    public static JsonElement encodeJson(Component value) {
+        return JsonTextSerializer.write(value);
+    }
+
+    public static PacketCodec<Component> json(PacketCodec<JsonElement> json) {
         return WireCodecs.mapped(json, JsonTextSerializer::read, JsonTextSerializer::write);
     }
 
-    public static PacketCodec<Style> jsonStyle(PacketCodec<com.google.gson.JsonElement> json) {
+    public static PacketCodec<Style> jsonStyle(PacketCodec<JsonElement> json) {
         return WireCodecs.mapped(json, JsonTextSerializer::readStyle, JsonTextSerializer::writeStyle);
     }
 }

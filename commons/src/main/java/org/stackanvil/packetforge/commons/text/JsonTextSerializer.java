@@ -6,6 +6,7 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 import java.io.IOException;
 import net.kyori.adventure.key.Key;
+import net.kyori.adventure.text.BlockNBTComponent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.Style;
@@ -19,7 +20,18 @@ final class JsonTextSerializer {
             .serializer()
             .newBuilder()
             .registerTypeAdapterFactory(new EventStyles())
+            .registerTypeAdapter(BlockNBTComponent.Pos.class, new Positions().nullSafe())
             .create();
+
+    private static final class Positions extends TypeAdapter<BlockNBTComponent.Pos> {
+        public BlockNBTComponent.Pos read(JsonReader input) throws IOException {
+            return NbtUtil.deserializeBlockPos(input.nextString());
+        }
+
+        public void write(JsonWriter output, BlockNBTComponent.Pos value) throws IOException {
+            output.value(value.asString());
+        }
+    }
 
     static Component read(JsonElement value) {
         return GSON.fromJson(normalize(value), Component.class);
@@ -50,8 +62,10 @@ final class JsonTextSerializer {
             if (object.has("nbt")) {
                 object = TextDiscriminators.select(object, "source", TextDiscriminators.SOURCES);
                 for (String field : java.util.List.of("interpret", "plain"))
-                    if (object.has(field) && (!(object.get(field) instanceof JsonPrimitive flag) || !flag.isBoolean()))
-                        object.remove(field);
+                    if (object.has(field)
+                            && (!(object.get(field) instanceof JsonPrimitive flag)
+                                    || !flag.isBoolean()
+                                    || !flag.getAsBoolean())) object.remove(field);
                 if (object.has("interpret")
                         && object.get("interpret").getAsBoolean()
                         && object.has("plain")
@@ -83,6 +97,10 @@ final class JsonTextSerializer {
             if (object.has("hover_event")) {
                 var hover = object.getAsJsonObject("hover_event");
                 String action = hover.get("action").getAsString();
+                if (action.equals("show_item")
+                        && hover.get("count") instanceof JsonPrimitive count
+                        && count.isNumber()
+                        && count.getAsInt() == 1) hover.remove("count");
                 if (action.equals("show_text")) hover.add("value", normalize(hover.get("value")));
                 if (action.equals("show_entity") && hover.has("name")) hover.add("name", normalize(hover.get("name")));
             }

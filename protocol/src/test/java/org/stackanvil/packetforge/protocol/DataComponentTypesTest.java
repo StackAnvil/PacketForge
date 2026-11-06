@@ -96,6 +96,11 @@ class DataComponentTypesTest {
                 import org.stackanvil.packetforge.protocol.packet.game.ClientboundCooldownPacket;
                 import org.stackanvil.packetforge.protocol.payload.*;
                 import org.stackanvil.packetforge.commons.CommandNode;
+                import org.stackanvil.packetforge.commons.status.ServerStatus;
+                import org.stackanvil.packetforge.protocol.packet.status.ClientboundStatusResponsePacket;
+                import org.stackanvil.packetforge.protocol.type.network.HashedPatchMap;
+                import java.util.Map;
+                import java.util.Set;
                 class Client {
                     ComponentPatch patch = ComponentPatch.builder().set(DataComponentTypes.DAMAGE, 12).build();
                     int damage = patch.get(DataComponentTypes.DAMAGE).orElseThrow();
@@ -103,6 +108,8 @@ class DataComponentTypesTest {
                     ClientboundCooldownPacket cooldown = new ClientboundCooldownPacket(Key.key("test:cooldown"), 20);
                     CommandNode.Argument<ArgumentTypeInfosPayload> argument = new CommandNode.Argument<>("argument", new ArgumentTypeInfosPayload.BrigadierBool(), null);
                     EntityDataSerializersPayload metadata = new EntityDataSerializersPayload.Byte((byte) 1);
+                    ClientboundStatusResponsePacket status = new ClientboundStatusResponsePacket(new ServerStatus(Component.text("server")));
+                    HashedPatchMap hashes = new HashedPatchMap(Map.of(DataComponentTypes.DAMAGE, 123), Set.of());
                     String describe(SlotDisplayPayload display) {
                         return switch (display) {
                             case SlotDisplayPayload.Empty empty -> "empty";
@@ -121,6 +128,9 @@ class DataComponentTypesTest {
         assertFalse(compile(source.replace(
                 "new EntityDataSerializersPayload.Byte((byte) 1)",
                 "new EntityDataSerializersPayload.Byte(\"wrong\")")));
+        assertFalse(compile(
+                source.replace("new ServerStatus(Component.text(\"server\"))", "new com.google.gson.JsonObject()")));
+        assertFalse(compile(source.replace("Map.of(DataComponentTypes.DAMAGE, 123)", "Map.of(0, 123)")));
     }
 
     private boolean compile(String source) throws Exception {
@@ -132,6 +142,7 @@ class DataComponentTypesTest {
                                 ComponentPatch.class,
                                 net.kyori.adventure.text.Component.class,
                                 Key.class,
+                                com.google.gson.JsonObject.class,
                                 ByteBuf.class,
                                 ReferenceCounted.class)
                         .stream()

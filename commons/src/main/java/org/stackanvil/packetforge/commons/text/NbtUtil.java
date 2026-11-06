@@ -9,6 +9,7 @@ package org.stackanvil.packetforge.commons.text;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.function.Consumer;
+import net.kyori.adventure.text.BlockNBTComponent;
 import net.kyori.adventure.text.format.ShadowColor;
 import net.kyori.adventure.util.ARGBLike;
 import org.cloudburstmc.nbt.NbtList;
@@ -17,12 +18,88 @@ import org.jspecify.annotations.Nullable;
 
 final class NbtUtil {
 
-    static net.kyori.adventure.text.BlockNBTComponent.Pos deserializeBlockPos(String value) {
-        String[] coordinates = value.trim().split("\\s+");
-        if (coordinates.length != 3) throw new IllegalArgumentException("Expected three block NBT coordinates");
-        for (int i = 0; i < coordinates.length; i++)
-            if (coordinates[i].equals("~") || coordinates[i].equals("^")) coordinates[i] += "0";
-        return net.kyori.adventure.text.BlockNBTComponent.Pos.fromString(String.join(" ", coordinates));
+    static BlockNBTComponent.Pos deserializeBlockPos(String value) {
+        String[] coordinates = value.split(" ", -1);
+        if (coordinates.length != 3 || coordinates[2].isEmpty())
+            throw new IllegalArgumentException("Expected three block NBT coordinates");
+        if (value.startsWith("^")) {
+            double[] local = new double[3];
+            for (int i = 0; i < 3; i++) {
+                if (!coordinates[i].startsWith("^")) throw new IllegalArgumentException("Mixed block coordinate types");
+                local[i] = coordinateDouble(coordinates[i].substring(1));
+            }
+            var parsed = BlockNBTComponent.LocalPos.localPos(local[0], local[1], local[2]);
+            return parsed.asString().equals(value) ? parsed : new SourceLocalPos(value, parsed);
+        }
+        var world = new BlockNBTComponent.WorldPos.Coordinate[3];
+        boolean integral = true;
+        for (int i = 0; i < 3; i++) {
+            String coordinate = coordinates[i];
+            boolean relative = coordinate.startsWith("~");
+            double number;
+            if (relative) number = coordinateDouble(coordinate.substring(1));
+            else if (coordinate.isEmpty()) number = 0;
+            else {
+                if (!coordinate.matches("-?[0-9]+"))
+                    throw new IllegalArgumentException("Invalid absolute block coordinate");
+                number = Integer.parseInt(coordinate);
+            }
+            if (number < Integer.MIN_VALUE || number > Integer.MAX_VALUE || number != (int) number) integral = false;
+            else
+                world[i] = relative
+                        ? BlockNBTComponent.WorldPos.Coordinate.relative((int) number)
+                        : BlockNBTComponent.WorldPos.Coordinate.absolute((int) number);
+        }
+        if (!integral) return new SourcePos(value);
+        var parsed = BlockNBTComponent.WorldPos.worldPos(world[0], world[1], world[2]);
+        return parsed.asString().equals(value) ? parsed : new SourceWorldPos(value, parsed);
+    }
+
+    private static double coordinateDouble(String number) {
+        if (number.isEmpty()) return 0;
+        if (!number.matches("-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)"))
+            throw new IllegalArgumentException("Invalid relative block coordinate");
+        return Double.parseDouble(number);
+    }
+
+    private record SourcePos(String asString) implements BlockNBTComponent.Pos {}
+
+    private record SourceWorldPos(String source, BlockNBTComponent.WorldPos parsed)
+            implements BlockNBTComponent.WorldPos {
+        public String asString() {
+            return source;
+        }
+
+        public Coordinate x() {
+            return parsed.x();
+        }
+
+        public Coordinate y() {
+            return parsed.y();
+        }
+
+        public Coordinate z() {
+            return parsed.z();
+        }
+    }
+
+    private record SourceLocalPos(String source, BlockNBTComponent.LocalPos parsed)
+            implements BlockNBTComponent.LocalPos {
+        public String asString() {
+            return source;
+        }
+
+        public double left() {
+            return parsed.left();
+        }
+
+        public double up() {
+            return parsed.up();
+        }
+
+        public double forwards() {
+            return parsed.forwards();
+        }
     }
 
     static UUID deserializeLenientUUID(Object object) {

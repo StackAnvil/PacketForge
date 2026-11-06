@@ -59,9 +59,12 @@ final class Emitter {
         var selection = new SchemaGraph(allModels, dispatches).select(registrations);
         var payloadApi = new PayloadApi(selection.dispatches());
         List<Analyzer.Model> models = payloadApi.models(selection.models());
+        var references = new ComponentReferences(payloadApi.dispatches());
+        models = references.models(models);
         var modelNames = new ModelNames(models);
         models = modelNames.models(models);
-        List<Analyzer.Dispatch> selectedDispatches = modelNames.dispatches(payloadApi.dispatches());
+        List<Analyzer.Dispatch> selectedDispatches =
+                modelNames.dispatches(references.dispatches(payloadApi.dispatches()));
         registrations = modelNames.registrations(registrations);
         var publicModels = new TreeMap<>(allModels);
         for (var model : models) publicModels.put(model.originalName(), model);

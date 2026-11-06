@@ -17,6 +17,28 @@ class ComponentCodecsTest {
     private static final List<DataComponentType<?>> SCHEMAS = List.of(NUMBER, TEXT, FLAG);
 
     @Test
+    void registryReferencesUseCanonicalTypedKeysAndRejectForeignIdentities() {
+        var codec = ComponentCodecs.type(SCHEMAS);
+        var buffer = Unpooled.buffer();
+        try {
+            codec.encode(buffer, TEXT);
+            assertSame(TEXT, codec.decode(buffer));
+            assertFalse(buffer.isReadable());
+            var foreign = new DataComponentType<>(TEXT.id(), Key.key("test:foreign"), WireCodecs.STRING);
+            assertThrows(IllegalArgumentException.class, () -> codec.encode(buffer, foreign));
+            assertFalse(buffer.isReadable());
+            WireCodecs.VAR_INT.encode(buffer, -1);
+            assertThrows(IllegalArgumentException.class, () -> codec.decode(buffer));
+            buffer.clear();
+            WireCodecs.VAR_INT.encode(buffer, 3);
+            assertThrows(IllegalArgumentException.class, () -> codec.decode(buffer));
+        } finally {
+            buffer.release();
+        }
+        assertThrows(IllegalArgumentException.class, () -> ComponentCodecs.type(List.of(TEXT, TEXT)));
+    }
+
+    @Test
     void standaloneComponentsRetainTypedKeysAndRejectUnknownOrForeignIdentities() {
         var codec = ComponentCodecs.component(SCHEMAS);
         var buffer = Unpooled.buffer();

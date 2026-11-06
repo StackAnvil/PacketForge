@@ -263,6 +263,7 @@ class GeneratedRoundTripTest {
                         : Map.of(
                                 sample(arguments[0], inner, variant, models),
                                 sample(arguments[1], innerShapes.get(1), variant, models));
+            if (parameterized.getRawType() == DataComponentType.class) return DataComponentTypes.byId(variant);
             if (parameterized.getRawType() == RegistryValue.class)
                 return variant == 1
                         ? new RegistryValue.Direct<>(sample(arguments[0], inner, variant, models))
@@ -274,6 +275,9 @@ class GeneratedRoundTripTest {
             throw new IllegalArgumentException("Unrecognized generic type: " + type);
         }
         Class<?> clazz = (Class<?>) type;
+        if (clazz == org.stackanvil.packetforge.commons.status.ServerStatus.class)
+            return new org.stackanvil.packetforge.commons.status.ServerStatus(
+                    net.kyori.adventure.text.Component.text("sample" + variant));
         if (clazz == HolderSet.class) return new HolderSet.Direct(variant == 0 ? List.of() : List.of(1));
         if (clazz == ComponentPatch.class)
             return variant == 0
@@ -316,10 +320,7 @@ class GeneratedRoundTripTest {
             return shape.equals("NBT_COMPOUND_NULLABLE") && variant == 0
                     ? null
                     : new NbtTag.Compound(Map.of("sample", new NbtTag.IntValue(variant)));
-        if (clazz == com.google.gson.JsonElement.class)
-            return shape.contains("ServerStatus")
-                    ? com.google.gson.JsonParser.parseString("{\"description\":\"sample" + variant + "\"}")
-                    : new com.google.gson.JsonPrimitive("sample" + variant);
+        if (clazz == com.google.gson.JsonElement.class) return new com.google.gson.JsonPrimitive("sample" + variant);
         if (clazz == net.kyori.adventure.key.Key.class) return net.kyori.adventure.key.Key.key("minecraft:stone");
         if (clazz == String.class) return variant == 0 ? "" : "é";
         if (clazz == int.class || clazz == Integer.class) return shape.startsWith("REGISTRY:") ? 0 : variant;

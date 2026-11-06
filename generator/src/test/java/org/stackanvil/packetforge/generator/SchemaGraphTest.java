@@ -19,6 +19,28 @@ class SchemaGraphTest {
     private static final Wire INT = new Wire("int", "WireCodecs.VAR_INT", "VAR_INT");
 
     @Test
+    void componentReferencesRequireTheCompleteRegistryAndItsPayloadDependencies() {
+        var reference = new Wire("int", "WireCodecs.VAR_INT", "REGISTRY:Registries.DATA_COMPONENT_TYPE");
+        var root = model("Root", field("component", reference));
+        var missing = new SchemaGraph(Map.of("Root", root), List.of());
+        assertEquals("Unresolved data-component registry types", missing.missing(registration("Root", null)));
+        var leaf = model("Leaf");
+        var components = new Dispatch(
+                "component",
+                INT,
+                List.of(new DispatchCase("0", wire("Leaf"), "test:leaf")),
+                "fixture.Components",
+                "fixture",
+                new Wire(
+                        "org.stackanvil.packetforge.commons.Variant<Integer>", "WireCodecs.UNIT", "dispatch:component"),
+                "DATA_COMPONENT_TYPE");
+        var graph = new SchemaGraph(Map.of("Root", root, "Leaf", leaf), List.of(components));
+        var selection = graph.select(List.of(registration("Root", null)));
+        assertEquals(List.of(leaf, root), selection.models());
+        assertEquals(List.of(components), selection.dispatches());
+    }
+
+    @Test
     void followsRecursiveModelsTablesAndFallbacksInStableOrder() {
         Model root = model("Root", field("nested", wire("Nested")), field("union", tableWire("outer")));
         Model nested = model("Nested", field("parent", wire("Root")));

@@ -8,11 +8,31 @@ import java.util.LinkedHashSet;
 public final class ComponentCodecs {
     private ComponentCodecs() {}
 
-    public static PacketCodec<DataComponent<?>> component(Iterable<DataComponentType<?>> types) {
+    public static PacketCodec<DataComponentType<?>> type(Iterable<DataComponentType<?>> types) {
+        var table = index(types);
+        return WireCodecs.of(
+                input -> {
+                    int id = WireCodecs.VAR_INT.decode(input);
+                    var type = table.get(id);
+                    if (type == null) throw new IllegalArgumentException("Unknown component ID: " + id);
+                    return type;
+                },
+                (output, type) -> {
+                    requireType(table, type);
+                    WireCodecs.VAR_INT.encode(output, type.id());
+                });
+    }
+
+    private static java.util.Map<Integer, DataComponentType<?>> index(Iterable<DataComponentType<?>> types) {
         var table = new LinkedHashMap<Integer, DataComponentType<?>>();
         for (var type : types)
             if (table.putIfAbsent(type.id(), type) != null)
                 throw new IllegalArgumentException("Duplicate component ID");
+        return table;
+    }
+
+    public static PacketCodec<DataComponent<?>> component(Iterable<DataComponentType<?>> types) {
+        var table = index(types);
         return WireCodecs.of(
                 input -> {
                     int id = WireCodecs.VAR_INT.decode(input);
@@ -28,10 +48,7 @@ public final class ComponentCodecs {
     }
 
     public static PacketCodec<ComponentPatch> patch(Iterable<DataComponentType<?>> types, boolean delimited) {
-        var table = new LinkedHashMap<Integer, DataComponentType<?>>();
-        for (var type : types)
-            if (table.putIfAbsent(type.id(), type) != null)
-                throw new IllegalArgumentException("Duplicate component ID");
+        var table = index(types);
         int componentCount = table.size();
         for (int id = 0; id < componentCount; id++)
             if (!table.containsKey(id)) throw new IllegalArgumentException("Non-contiguous component schema table");

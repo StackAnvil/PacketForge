@@ -22,6 +22,8 @@ Treat unknown packet layouts as explicit diagnostics. Do not emit placeholder co
 Preserve the wire IDs of unsupported packets.
 
 Validate source dependencies with `SchemaGraph` before public API lowering.
-`PayloadApi` binds discriminator types. `ModelNames` assigns public model names.
+`PayloadApi` binds discriminator types. `ComponentReferences` binds component keys.
+`ModelNames` assigns public model names. Component references require the full source registry.
+`StatusWire` must validate status schemas before selecting the shared JSON codec.
 Keep source identities, wire shapes, projection metadata, and string literals intact.
 Construction helpers must delegate to canonical constructors to retain source validation.

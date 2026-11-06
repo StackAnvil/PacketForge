@@ -1661,6 +1661,11 @@ final class Analyzer {
                         && operation.getScope().map(Object::toString).orElse("").equals("ByteBufCodecs")
                         && operation.getNameAsString().equals("fromCodec")
                         && operation.getArguments().size() == 2) {
+                    if (inner.type().equals("com.google.gson.JsonElement")) {
+                        var status = StatusWire.json(
+                                operation.getArgument(1), operation.getArgument(0), source, index, inner);
+                        if (status.isPresent()) return status.get();
+                    }
                     var text = TextWire.nbt(operation.getArgument(1), source, index, false);
                     if (text.isPresent() && inner.type().equals("com.google.gson.JsonElement"))
                         return new Wire(
