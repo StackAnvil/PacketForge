@@ -20,3 +20,8 @@ Only compatibility tests can load vanilla in their isolated class loader.
 Treat unknown registration operations as fatal because they can shift packet IDs.
 Treat unknown packet layouts as explicit diagnostics. Do not emit placeholder codecs.
 Preserve the wire IDs of unsupported packets.
+
+Validate source dependencies with `SchemaGraph` before public API lowering.
+`PayloadApi` binds discriminator types. `ModelNames` assigns public model names.
+Keep source identities, wire shapes, projection metadata, and string literals intact.
+Construction helpers must delegate to canonical constructors to retain source validation.

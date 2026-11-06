@@ -6,12 +6,28 @@ import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier.Keyword;
+import com.github.javaparser.ast.body.BodyDeclaration;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.RecordDeclaration;
+import com.github.javaparser.ast.nodeTypes.NodeWithMembers;
+import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import javax.lang.model.SourceVersion;
 import org.stackanvil.packetforge.generator.SourceIndex.Unsupported;
 
 /** Emits sealed cases with typed codecs. No discriminator can be paired with the wrong value type. */
 final class PayloadJavaEmitter {
     private final JavaParser parser =
             new JavaParser(new ParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE));
+
+    private final Map<String, Model> models;
+
+    PayloadJavaEmitter(List<Model> models) {
+        this.models = models.stream().collect(Collectors.toMap(Model::generatedName, model -> model));
+    }
 
     String emit(Dispatch table, PayloadApi api) {
         String name = api.type(table.name()), simple = name.substring(name.lastIndexOf('.') + 1);
@@ -38,12 +54,15 @@ final class PayloadJavaEmitter {
                             + branch.value().codec() + "), ignored -> new " + local + "(), ignored -> Unit.INSTANCE)"
                     : "WireCodecs.mapped(WireCodecs.lazy(() -> "
                             + branch.value().codec() + "), " + local + "::new, " + local + "::value)";
-            member(
-                    declaration,
-                    "record " + local + "(" + fields + ") implements " + simple + " { " + constructor
-                            + " public " + Analyzer.boxed(table.key().type()) + " type() { return " + key(table, branch)
-                            + "; }"
-                            + " public static final PacketCodec<" + local + "> CODEC = " + codec + "; }");
+            var record = member(
+                            declaration,
+                            "record " + local + "(" + fields + ") implements " + simple + " { " + constructor
+                                    + " public " + Analyzer.boxed(table.key().type()) + " type() { return "
+                                    + key(table, branch)
+                                    + "; }"
+                                    + " public static final PacketCodec<" + local + "> CODEC = " + codec + "; }")
+                    .asRecordDeclaration();
+            construction(declaration, record, local, branch.value(), unitValue);
             decode.append("if (java.util.Objects.equals(type, ")
                     .append(key(table, branch))
                     .append(")) return ")
@@ -75,6 +94,10 @@ final class PayloadJavaEmitter {
                                                             + ")) throw new IllegalArgumentException(\"Known payload channel: \" + type);")
                                             .toList())
                             + " } }");
+            member(
+                    declaration,
+                    "static Unknown unknown(" + keyType + " type, "
+                            + table.fallback().type() + " data) { return new Unknown(type, data); }");
             decode.append("return new Unknown(type, ")
                     .append(table.fallback().codec())
                     .append(".decode(input));");
@@ -101,26 +124,51 @@ final class PayloadJavaEmitter {
         return branch.key();
     }
 
-    private void member(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration declaration, String source) {
+    private BodyDeclaration<?> member(NodeWithMembers<?> declaration, String source) {
         var parsed = parser.parseBodyDeclaration(source);
         if (!parsed.isSuccessful()) throw new Unsupported("Invalid generated payload: " + parsed.getProblems());
-        declaration.addMember(parsed.getResult().orElseThrow());
+        var member = parsed.getResult().orElseThrow();
+        declaration.addMember(member);
+        return member;
+    }
+
+    private void construction(
+            ClassOrInterfaceDeclaration owner, RecordDeclaration record, String name, Wire value, boolean unit) {
+        Model model = models.get(value.type());
+        boolean flattened = false;
+        if (model != null && model.constants().isEmpty()) {
+            for (var fields : RecordConstruction.parameterSets(model)) {
+                if (RecordConstruction.matchesCanonicalPayload(fields, value.type())) continue;
+                String parameters = String.join(
+                        ", ",
+                        fields.stream()
+                                .map(field -> qualifiedType(field.read().type()) + " " + field.name())
+                                .toList());
+                String nested = "new " + value.type() + "(" + RecordConstruction.arguments(model, fields) + ")";
+                member(record, "public " + name + "(" + parameters + ") { this(" + nested + "); }");
+                factory(owner, name, parameters, nested);
+                flattened = true;
+            }
+        }
+        if (!flattened) factory(owner, name, unit ? "" : qualifiedType(value.type()) + " value", unit ? "" : "value");
+    }
+
+    private void factory(ClassOrInterfaceDeclaration owner, String name, String parameters, String arguments) {
+        String method = Character.toLowerCase(name.charAt(0)) + name.substring(1);
+        if (SourceVersion.isKeyword(method)
+                || Set.of("type", "getClass", "wait", "notify", "notifyAll", "equals", "hashCode", "toString")
+                        .contains(method)) method += "Value";
+        member(
+                owner,
+                "static " + name + " " + method + "(" + parameters + ") { return new " + name + "(" + arguments
+                        + "); }");
     }
 
     private String qualifiedType(String source) {
         var type = parser.parseType(source).getResult().orElseThrow();
-        for (var name : type.findAll(com.github.javaparser.ast.type.ClassOrInterfaceType.class))
+        for (var name : type.findAll(ClassOrInterfaceType.class))
             if (name.getScope().isEmpty()
-                    && java.util.Set.of(
-                                    "String",
-                                    "Integer",
-                                    "Byte",
-                                    "Short",
-                                    "Long",
-                                    "Float",
-                                    "Double",
-                                    "Boolean",
-                                    "Character")
+                    && Set.of("String", "Integer", "Byte", "Short", "Long", "Float", "Double", "Boolean", "Character")
                             .contains(name.getNameAsString()))
                 name.setScope(parser.parseClassOrInterfaceType("java.lang")
                         .getResult()
@@ -129,7 +177,7 @@ final class PayloadJavaEmitter {
     }
 
     private static boolean isPrimitive(String type) {
-        return java.util.Set.of("boolean", "byte", "short", "int", "long", "float", "double", "char")
+        return Set.of("boolean", "byte", "short", "int", "long", "float", "double", "char")
                 .contains(type);
     }
 }

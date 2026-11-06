@@ -23,7 +23,8 @@ final class Emitter {
             List<Analyzer.Model> models,
             List<Analyzer.Dispatch> dispatches,
             Map<String, List<Analyzer.RegistryGap>> registryGaps,
-            Map<String, PayloadApi.PayloadType> payloadTypes) {}
+            Map<String, PayloadApi.PayloadType> payloadTypes,
+            Map<String, String> modelNames) {}
 
     Report emit(
             Path output,
@@ -58,7 +59,12 @@ final class Emitter {
         var selection = new SchemaGraph(allModels, dispatches).select(registrations);
         var payloadApi = new PayloadApi(selection.dispatches());
         List<Analyzer.Model> models = payloadApi.models(selection.models());
-        List<Analyzer.Dispatch> selectedDispatches = payloadApi.dispatches();
+        var modelNames = new ModelNames(models);
+        models = modelNames.models(models);
+        List<Analyzer.Dispatch> selectedDispatches = modelNames.dispatches(payloadApi.dispatches());
+        registrations = modelNames.registrations(registrations);
+        var publicModels = new TreeMap<>(allModels);
+        for (var model : models) publicModels.put(model.originalName(), model);
         if (Files.exists(output) && !Files.exists(output.resolve(".packetforge-output"))) {
             try (var contents = Files.list(output)) {
                 if (contents.findAny().isPresent())
@@ -72,14 +78,14 @@ final class Emitter {
         var modelEmitter = new ModelJavaEmitter();
         for (var model : models) writeJava(output, model.generatedName(), modelEmitter.emit(model));
         emitDispatches(output, selectedDispatches, payloadApi);
-        var payloadEmitter = new PayloadJavaEmitter();
+        var payloadEmitter = new PayloadJavaEmitter(models);
         for (var table : selectedDispatches)
             if (!table.registry().equals("DATA_COMPONENT_TYPE"))
                 writeJava(output, payloadApi.type(table.name()), payloadEmitter.emit(table, payloadApi));
         for (var table : selectedDispatches)
             if (table.registry().equals("DATA_COMPONENT_TYPE"))
                 writeJava(output, ComponentTypesEmitter.NAME, new ComponentTypesEmitter().emit(table));
-        emitRegistry(output, protocol, registrations, allModels);
+        emitRegistry(output, protocol, registrations, publicModels);
         int count = (int)
                 registrations.stream().filter(Analyzer.Registration::supported).count();
         Report report = new Report(
@@ -91,7 +97,8 @@ final class Emitter {
                 models,
                 selectedDispatches,
                 new TreeMap<>(registryGaps),
-                payloadApi.types());
+                payloadApi.types(),
+                modelNames.names());
         Path reportFile = output.resolve("resources/packetforge/protocol.json");
         Files.createDirectories(reportFile.getParent());
         Files.writeString(reportFile, JSON.toJson(report) + "\n");

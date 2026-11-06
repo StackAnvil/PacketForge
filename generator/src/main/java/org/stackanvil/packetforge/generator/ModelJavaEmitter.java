@@ -64,6 +64,13 @@ final class ModelJavaEmitter {
                     .setPublic(true)
                     .setBody(block(String.join("\n", model.validations()))));
         }
+        var required = RecordConstruction.required(model.fields());
+        if (required.size() != model.fields().size()) {
+            var constructor = declaration.addConstructor(PUBLIC);
+            for (var field : required)
+                constructor.addParameter(type(field.read().type()), field.name());
+            constructor.setBody(block("this(" + RecordConstruction.arguments(model, required) + ");"));
+        }
         if (model.program() == null) addFieldCodecs(declaration, model);
         declaration.addFieldWithInitializer(codecType(simple), "CODEC", codec(model, simple), PUBLIC, STATIC, FINAL);
         if (model.program() != null) {

@@ -29,10 +29,10 @@ class ImperativePacketTest {
         var output = Unpooled.buffer();
         try {
             var opened = ServerboundSeenAdvancementsPacket.CODEC.decode(input);
-            assertEquals(ServerboundSeenAdvancementsPacket_Action.OPENED_TAB, opened.action());
+            assertEquals(ServerboundSeenAdvancementsPacketAction.OPENED_TAB, opened.action());
             assertEquals(Key.key("minecraft:x"), opened.tab());
             var closed = new ServerboundSeenAdvancementsPacket(
-                    ServerboundSeenAdvancementsPacket_Action.CLOSED_SCREEN, Key.key("minecraft:unused"));
+                    ServerboundSeenAdvancementsPacketAction.CLOSED_SCREEN, Key.key("minecraft:unused"));
             closed.serialize(output);
             assertEquals(1, output.readableBytes());
             assertEquals(1, output.readUnsignedByte());

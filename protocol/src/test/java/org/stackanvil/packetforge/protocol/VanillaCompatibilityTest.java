@@ -50,9 +50,9 @@ class VanillaCompatibilityTest {
                                 new Pair<>(
                                         org.stackanvil.packetforge.protocol.type.world.entity.EquipmentSlot.HEAD,
                                         ItemStack.EMPTY))),
-                new ClientboundMoveEntityPacket_Pos(
+                new ClientboundMoveEntityPacketPos(
                         123, new MovementDelta.Linear(Short.MIN_VALUE, (short) 0, Short.MAX_VALUE), true),
-                new ClientboundMoveEntityPacket_PosRot(
+                new ClientboundMoveEntityPacketPosRot(
                         123,
                         new MovementDelta.Stepped(List.of(
                                 new MovementDelta.Step((short) -1, (short) 2, (short) -3, 0),
@@ -73,9 +73,9 @@ class VanillaCompatibilityTest {
                 new ClientboundResetScorePacket("owner", null),
                 new ClientboundResetScorePacket("owner", "objective"),
                 new ClientboundCustomChatCompletionsPacket(
-                        ClientboundCustomChatCompletionsPacket_Action.REMOVE, List.of("hello", "café")),
+                        ClientboundCustomChatCompletionsPacketAction.REMOVE, List.of("hello", "café")),
                 new ClientboundCooldownPacket(Key.key("minecraft:stone"), 128),
-                new ServerboundClientCommandPacket(ServerboundClientCommandPacket_Action.REQUEST_STATS),
+                new ServerboundClientCommandPacket(ServerboundClientCommandPacketAction.REQUEST_STATS),
                 new ServerboundUseItemPacket(
                         org.stackanvil.packetforge.protocol.type.world.InteractionHand.OFF_HAND, 12345, 180f, -90f),
                 new ServerboundPingRequestPacket(Long.MAX_VALUE),
@@ -87,18 +87,18 @@ class VanillaCompatibilityTest {
                 new ClientboundSetPlayerTeamPacket((byte) 4, "team", List.of("player"), java.util.Optional.empty())));
         List<TrackedWaypointTypePayload> waypointContents = List.of(
                 new TrackedWaypointTypePayload.Empty(),
-                new TrackedWaypointTypePayload.Vec3i(new TrackedWaypoint_Vec3iWaypoint_Contents(
+                new TrackedWaypointTypePayload.Vec3i(new TrackedWaypointVec3iWaypointContents(
                         new IntVector3(Integer.MIN_VALUE, -1, Integer.MAX_VALUE))),
                 new TrackedWaypointTypePayload.Chunk(
-                        new TrackedWaypoint_ChunkWaypoint_Contents(new ChunkPosition(-12345, 67890))),
-                new TrackedWaypointTypePayload.Azimuth(new TrackedWaypoint_AzimuthWaypoint_Contents(-3.1415927f)));
-        for (var operation : ClientboundTrackedWaypointPacket_Operation.values())
+                        new TrackedWaypointChunkWaypointContents(new ChunkPosition(-12345, 67890))),
+                new TrackedWaypointTypePayload.Azimuth(new TrackedWaypointAzimuthWaypointContents(-3.1415927f)));
+        for (var operation : ClientboundTrackedWaypointPacketOperation.values())
             for (var contents : waypointContents)
                 for (boolean named : new boolean[] {false, true}) {
                     Either<UUID, String> id = named
                             ? Either.right("waypoint café")
                             : Either.left(new UUID(Long.MIN_VALUE, Long.MAX_VALUE));
-                    var icon = new Waypoint_Icon(
+                    var icon = new WaypointIcon(
                             Key.key("minecraft:default"),
                             named ? java.util.Optional.of(0xff123456) : java.util.Optional.empty());
                     samples.add(
@@ -112,13 +112,13 @@ class VanillaCompatibilityTest {
                 .orElseThrow();
         for (int bits = 0; bits < 256; bits++)
             for (int variant = 0; variant < 3; variant++) {
-                var actions = java.util.EnumSet.noneOf(ClientboundPlayerInfoUpdatePacket_Action.class);
+                var actions = java.util.EnumSet.noneOf(ClientboundPlayerInfoUpdatePacketAction.class);
                 var values = new java.util.EnumMap<
-                        ClientboundPlayerInfoUpdatePacket_Action, ClientboundPlayerInfoUpdateActionPayload>(
-                        ClientboundPlayerInfoUpdatePacket_Action.class);
+                        ClientboundPlayerInfoUpdatePacketAction, ClientboundPlayerInfoUpdateActionPayload>(
+                        ClientboundPlayerInfoUpdatePacketAction.class);
                 for (var branchValue : actionTable.getAsJsonArray("cases")) {
                     var branch = branchValue.getAsJsonObject();
-                    var action = ClientboundPlayerInfoUpdatePacket_Action.valueOf(
+                    var action = ClientboundPlayerInfoUpdatePacketAction.valueOf(
                             branch.get("key").getAsString());
                     if ((bits & 1 << action.ordinal()) == 0) continue;
                     actions.add(action);

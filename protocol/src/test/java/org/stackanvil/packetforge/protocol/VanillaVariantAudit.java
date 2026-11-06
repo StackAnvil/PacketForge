@@ -11,8 +11,8 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.kyori.adventure.key.Key;
 import org.stackanvil.packetforge.commons.*;
+import org.stackanvil.packetforge.protocol.packet.game.ServerboundCommandSuggestionChatOnlyPacket;
 import org.stackanvil.packetforge.protocol.packet.game.ServerboundCommandSuggestionPacket;
-import org.stackanvil.packetforge.protocol.packet.game.ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC;
 import org.stackanvil.packetforge.protocol.packet.game.ServerboundSetCreativeModeSlotPacket;
 import org.stackanvil.packetforge.protocol.payload.ArgumentTypeInfosPayload;
 
@@ -554,10 +554,10 @@ final class VanillaVariantAudit {
                 PacketCodec<Object> generated = cast(
                         commands
                                 ? ServerboundCommandSuggestionPacket.CODEC
-                                : ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC);
+                                : ServerboundCommandSuggestionChatOnlyPacket.CODEC);
                 Object value = commands
                         ? new ServerboundCommandSuggestionPacket(7, "é".repeat(length))
-                        : new ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC(7, "é".repeat(length));
+                        : new ServerboundCommandSuggestionChatOnlyPacket(7, "é".repeat(length));
                 Object
                         vanilla =
                                 packetType
@@ -613,8 +613,7 @@ final class VanillaVariantAudit {
             ByteBuf input = Unpooled.wrappedBuffer(malformed);
             try {
                 var failure = assertThrows(
-                        RuntimeException.class,
-                        () -> ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC.decode(input));
+                        RuntimeException.class, () -> ServerboundCommandSuggestionChatOnlyPacket.CODEC.decode(input));
                 assertEquals(
                         rejected.getCause()
                                 .getClass()
@@ -635,11 +634,11 @@ final class VanillaVariantAudit {
         }) {
             ByteBuf input = Unpooled.wrappedBuffer(malformedUtf8);
             try {
-                var value = ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC.decode(input);
+                var value = ServerboundCommandSuggestionChatOnlyPacket.CODEC.decode(input);
                 Object original = sourceDecode(chat, malformedUtf8);
                 assertEquals(value.command(), packetType.getMethod("command").invoke(original));
                 assertArrayEquals(
-                        body(cast(ServerboundCommandSuggestionPacket_CHAT_ONLY_STREAM_CODEC.CODEC), value),
+                        body(cast(ServerboundCommandSuggestionChatOnlyPacket.CODEC), value),
                         sourceEncode(chat, original));
                 assertFalse(input.isReadable());
                 compared++;
