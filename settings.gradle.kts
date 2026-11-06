@@ -1,2 +1,2 @@
 rootProject.name = "packetforge"
-include("commons", "generator", "protocol")
+include("commons", "generator", "protocol", "transport")

@@ -25,6 +25,7 @@ Minecraft files stay under `build/minecraft/26.3/`. Generated Java files stay un
 | `generator` | Download inputs, decompile, analyze Java syntax trees, lower wire operations, and emit Java records and codecs. |
 | `commons` | Provide Netty buffer codecs, packet interfaces, packed block positions, and an immutable packet registry. |
 | `protocol` | Generate and compile the 26.3 library. Publish it separately from the generator. |
+| `transport` | Provide TCP clients and servers, ordered sessions, directional states, framing, compression, and encryption. |
 
 The generated protocol depends on `commons`, Netty, Gson, and Adventure. Minecraft, Vineflower, and JavaParser are absent from its runtime dependencies. Packet records expose a `CODEC` and implement `Packet.serialize(ByteBuf)`.
 
@@ -118,7 +119,56 @@ var registry = GeneratedProtocol.registry(context);
 
 `Context` is an interface. Stateful implementations can change their flags while the same registry stays in use. The registry checks each flag for every encode or decode. The parameterless `registry()` uses `Context.UNRESTRICTED`. `SkippedPacketException` identifies source rejections that allow the caller to skip the packet. The chat-only command codec retains its asymmetric limits: 256 characters when decoding and 32,500 when encoding.
 
-`state` and `flow` use `PacketRegistry.State` and `PacketRegistry.Flow`. Supply one complete packet body to `registry.decode`. The registry reads the numeric ID and rejects trailing bytes. Framing, sessions, compression, encryption, authentication, and bundle assembly are outside this project.
+`state` and `flow` use `PacketRegistry.State` and `PacketRegistry.Flow`. Supply one complete packet body to `registry.decode`. The registry reads the numeric ID and rejects trailing bytes. The optional `transport` module handles the TCP stream around these bodies.
+
+## TCP sessions
+
+`TcpTransport` owns its event loops, listening sockets, and connections. Its default constructor uses `GeneratedProtocol.registry()`. Pass a registry to use a different codec context. `connect(address, configure)` creates a client session; `bind(address, configure)` creates a server and configures each accepted session before it becomes active. Close the transport when finished. Closing a `TcpServer` also closes its accepted connections.
+
+Sessions start in `HANDSHAKING` for both directions. Set inbound and outbound states separately because acknowledgements can use the old outbound state after the inbound state changes. `send(packet)` selects the numeric ID for the current outbound state and endpoint direction. An ambiguous custom registry requires `send(key, packet)`.
+
+This example sends a status request. Imports are omitted.
+
+```java
+try (var transport = new TcpTransport()) {
+    var response = new CompletableFuture<ServerStatus>();
+    var session = transport.connect(new InetSocketAddress("localhost", 25565), connection -> {
+        connection.addListener(new SessionListener() {
+            @Override
+            public void connected(Session session) {
+                session.setInboundState(State.STATUS);
+                session.sendAndTransition(
+                        new ClientIntentionPacket(
+                                GeneratedProtocol.PROTOCOL_VERSION, "localhost", 25565, ClientIntent.STATUS),
+                        State.STATUS);
+                session.send(new ServerboundStatusRequestPacket());
+            }
+
+            @Override
+            public void packetReceived(Session session, Packet packet) {
+                if (packet instanceof ClientboundStatusResponsePacket status) {
+                    response.complete(status.status());
+                }
+            }
+
+            @Override
+            public void disconnected(Session session, Throwable cause) {
+                response.completeExceptionally(cause == null ? new ClosedChannelException() : cause);
+            }
+        });
+    }).join();
+    ServerStatus status = response.orTimeout(10, TimeUnit.SECONDS).join();
+    session.closeAsync().join();
+}
+```
+
+Callbacks run in connection order on the event loop. Keep them short and do not block on session futures inside callbacks. Operations requested by a callback run after that callback returns, before the next frame is decoded. Send futures complete after a successful local write and `packetSent` callbacks; they do not confirm peer receipt. Keep packet values unchanged until their send future completes. `addListener` and `onPacket` return subscriptions that can be closed to remove callbacks.
+
+`sendAndTransition`, `sendAndSetCompression`, and `sendAndEnableEncryption` write their packet using the current settings, then change settings for subsequent packets. `setCompressionThreshold` and `enableEncryption` apply negotiated inbound changes. Compression uses zlib with the vanilla 8 MiB decompressed limit. Framing uses a 21-bit length. Encryption uses a 16-byte AES key and AES/CFB8 with the key bytes as the IV. Enable it at the key-exchange boundary before the peer sends encrypted data.
+
+Malformed remote packets and listener failures close the connection. Source `SkippedPacketException` rejections notify `packetSkipped` and allow the next frame. A local registry or packet-codec error fails its send future before any bytes are written. `disconnect(cause)` reports a local failure to disconnect listeners. An ordinary `close` reports a null cause. `Session.close()` starts a close without waiting; `closeAsync()` and `closeFuture()` complete after disconnect callbacks. Transport and server `close()` wait outside their own network callbacks and start shutdown without blocking inside those callbacks.
+
+The default connect timeout is 10 seconds and the idle-read timeout is 30 seconds. The transport constructor accepts a thread count and timeout durations; a zero read timeout disables idle-read detection. Automatic login, authentication, configuration negotiation, keep-alive responses, and bundle assembly are still pending. Applications currently drive those exchanges through the session API.
 
 ## Extraction
 
@@ -158,3 +208,5 @@ The generator can reuse existing decompiled sources. Relative paths resolve from
 `./gradlew test` tests malformed wire inputs, field mismatches, generated Java compilation, and packet ID preservation. It round-trips three sample cases for each generated registration. Imperative codecs also receive mutations of valid seed bodies. Focused tests exercise conditional fields and bit flags. The compatibility test loads the verified server jar in an isolated class loader and initializes vanilla registries. This runs in tests only.
 
 The current suite covers 780 generated round trips and 8,522 vanilla comparisons: 3,705 packet bodies, 1,761 dispatch payloads, 1,464 component patches, 32 nested-value and sparse-enum cases, 1,121 named-codec, context, command-flag, graph, and payload boundary cases, 111 rich-text, style, and event cases, 274 identifier cases, and 54 status cases for 26.3. It also compares all 260 packet IDs, directions, states, and names with vanilla protocol details, verifies every recovered registry discriminator, and rejects source-invalid payload cases. Command tests cover all 256 node-flag bytes and all 256 bound-flag bytes for each numeric argument type. It compares encoded bytes, then compares complete decoded wire values when unordered NBT entries change order. Sample cases do not prove every value or branch. Live client/server interoperability and other Minecraft versions are not validated. The coverage report includes exact input hashes and tool versions for reproducing the extraction.
+
+Transport tests separately compare frame, compression, and cipher behavior with isolated vanilla handlers. Loopback tests cover a status handshake, concurrent sends, compressed and encrypted packets, timeouts, callback failures, and connection shutdown. They do not connect to a live Minecraft client or server.
